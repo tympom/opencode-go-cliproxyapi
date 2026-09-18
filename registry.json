@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "plugins": [
+    {
+      "id": "opencode-go-cliproxyapi",
+      "name": "OpenCode Go",
+      "description": "Exposes OpenCode Go as a single unified provider (opencode-go) in CLIProxyAPI, translating across OpenAI Chat Completions, Anthropic Messages, and OpenAI Responses with shared key pooling, rotation, and cooldowns.",
+      "author": "tympom",
+      "version": "0.1.7",
+      "repository": "https://github.com/tympom/opencode-go-cliproxyapi",
+      "homepage": "https://github.com/tympom/opencode-go-cliproxyapi",
+      "tags": ["provider", "opencode", "opencode-go"]
+    }
+  ]
+}
