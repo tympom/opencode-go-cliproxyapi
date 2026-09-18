@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.8"
+	pluginVersion = "0.1.9"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -341,7 +341,7 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 			Label  string `json:"label"`
 			APIKey string `json:"api_key"`
 		}{
-			Type: "opencode-go", ID: id, Label: "OpenCode Go credential " + hash, APIKey: key.Value,
+			Type: "opencode-go", ID: id, Label: keyLabel(key), APIKey: key.Value,
 		})
 		if err != nil {
 			return fmt.Errorf("build auth record")

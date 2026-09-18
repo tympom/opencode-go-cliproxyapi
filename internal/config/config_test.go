@@ -135,6 +135,17 @@ func TestLoadEnvExpansion(t *testing.T) {
 	}
 }
 
+func TestLoadKeyLabels(t *testing.T) {
+	doc := "api-keys:\n  - value: sk-one\n    label: \"work\"\n  - value: sk-two\n"
+	c, err := Load([]byte(doc))
+	if err != nil {
+		t.Fatalf("Load failed: %v", err)
+	}
+	if len(c.APIKeys) != 2 || c.APIKeys[0].Label != "work" || c.APIKeys[1].Label != "" {
+		t.Fatalf("APIKeys = %+v", c.APIKeys)
+	}
+}
+
 func TestLoadIgnoresRemovedSchedulerFields(t *testing.T) {
 	doc := "routing:\n  strategy: round-robin\n  max-retries-per-request: 9\n  transient-retry-interval: 1s\n  fallback-cooldown: 1m\n" +
 		"api-keys:\n  - value: sk-dummy\n    priority: 7\n"

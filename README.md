@@ -81,7 +81,9 @@ plugins:
       # OpenCode Go API keys (at least one required). Supports ${ENV_VAR} expansion.
       api-keys:
         - value: "sk-opencode-key-1"
+          label: "work"                # optional display name for quota page and auth files
         - value: "sk-opencode-key-2"
+          label: "personal"
         - value: "${OPENCODE_GO_API_KEY}"
 
       # Catalog discovery settings
@@ -111,7 +113,7 @@ plugins:
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `api-keys` | `[]object` | *(Required)* | List of API keys (`- value: "..."`). Supports `${ENV_VAR}` expansion. Duplicates and empty values are rejected. |
+| `api-keys` | `[]object` | *(Required)* | List of API keys (`- value: "..."`, optional `label: "..."` for a display name on the quota page and in auth files). Supports `${ENV_VAR}` expansion. Duplicates and empty values are rejected. |
 | `base-url` | `string` | `https://opencode.ai/zen/go/v1` | Upstream base URL. Must be valid HTTPS (or HTTP if `allow-http: true`) without query parameters, fragments, or userinfo. |
 | `catalog-url` | `string` | `{base-url}/models` | Full URL for catalog discovery. Defaults to `{base-url}/models`. |
 | `model-prefix.enabled` | `bool` | `true` | When `true`, client-facing model names use `<prefix>/<model>`. When `false`, uses bare model IDs. |

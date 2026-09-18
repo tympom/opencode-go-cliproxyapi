@@ -29,6 +29,7 @@ type ModelPrefix struct {
 
 type APIKey struct {
 	Value string
+	Label string
 }
 
 type Catalog struct {
@@ -83,6 +84,7 @@ type rawPrefix struct {
 
 type rawKey struct {
 	Value string `yaml:"value"`
+	Label string `yaml:"label"`
 }
 
 type rawCatalog struct {
@@ -114,7 +116,7 @@ func Load(yamlBytes []byte) (Config, error) {
 	}
 	keys := make([]APIKey, len(raw.APIKeys))
 	for i, k := range raw.APIKeys {
-		keys[i] = APIKey{Value: os.ExpandEnv(k.Value)}
+		keys[i] = APIKey{Value: os.ExpandEnv(k.Value), Label: strings.TrimSpace(k.Label)}
 	}
 	refreshInterval, err := parseDuration("catalog.refresh-interval", raw.Catalog.RefreshInterval, DefaultRefreshInterval)
 	if err != nil {

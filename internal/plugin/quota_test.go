@@ -37,7 +37,7 @@ func TestManagementRegistration(t *testing.T) {
 func TestQuotaListDoesNotCallHost(t *testing.T) {
 	f := &fakeCaller{}
 	m := NewManager(NewHostBridge(f.call))
-	m.cfg = config.Config{APIKeys: []config.APIKey{{Value: "quota-key-a"}, {Value: "quota-key-b"}}}
+	m.cfg = config.Config{APIKeys: []config.APIKey{{Value: "quota-key-a"}, {Value: "quota-key-b"}, {Value: "quota-key-c", Label: "work"}}}
 	var got quotaList
 	resp, err := m.HandleManagement(context.Background(), pluginapi.ManagementRequest{Method: http.MethodPost, Path: "/v0/management/plugins/" + pluginName + "/quota-usage", Body: []byte(`{}`)})
 	if err != nil {
@@ -46,7 +46,7 @@ func TestQuotaListDoesNotCallHost(t *testing.T) {
 	if err := json.Unmarshal(resp.Body, &got); err != nil {
 		t.Fatal(err)
 	}
-	if len(got.Cards) != 2 || got.Cards[0].Label != "OpenCode Go credential "+mustHashPrefix("quota-key-a") || got.Cards[1].Label != "OpenCode Go credential "+mustHashPrefix("quota-key-b") {
+	if len(got.Cards) != 3 || got.Cards[0].Label != "key …ey-a" || got.Cards[1].Label != "key …ey-b" || got.Cards[2].Label != "work" {
 		t.Fatalf("cards = %+v", got.Cards)
 	}
 	if strings.Contains(string(resp.Body), "quota-key-") || len(f.callsOf(pluginabi.MethodHostHTTPDo)) != 0 {
@@ -72,7 +72,7 @@ func TestQuotaRefresh(t *testing.T) {
 	}}
 	m := NewManager(NewHostBridge(f.call))
 	m.cfg = config.Config{BaseURL: "https://quota.test/v1/", RequestTimeout: config.DefaultRequestTimeout, APIKeys: []config.APIKey{{Value: key}}}
-	id, _ := quotaIdentity(key)
+	id := quotaKeyID(key)
 	resp, err := m.HandleManagement(context.Background(), pluginapi.ManagementRequest{Method: http.MethodPost, Path: "/v0/management/plugins/" + pluginName + "/quota-usage", Body: []byte(`{"key_id":"` + id + `"}`)})
 	if err != nil {
 		t.Fatal(err)
@@ -118,7 +118,7 @@ func TestQuotaPageDecodesCurrentCPAAuthStorage(t *testing.T) {
 
 func TestQuotaErrorsAreRedacted(t *testing.T) {
 	const key = "quota-error-secret"
-	id, _ := quotaIdentity(key)
+	id := quotaKeyID(key)
 	for name, responder := range map[string]func(string, []byte) ([]byte, error){
 		"bridge": func(string, []byte) ([]byte, error) { return nil, context.Canceled },
 		"status": func(string, []byte) ([]byte, error) {
@@ -232,6 +232,5 @@ func TestQuotaPageUsesNativeQuotaStylesAndThemeBridge(t *testing.T) {
 }
 
 func mustHashPrefix(key string) string {
-	_, label := quotaIdentity(key)
-	return strings.TrimPrefix(label, "OpenCode Go credential ")
+	return strings.TrimPrefix(quotaKeyID(key), "opencode-go-key-")
 }

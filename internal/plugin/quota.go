@@ -52,10 +52,32 @@ type quotaUpstreamWindow struct {
 	ResetsAt string `json:"resetsAt"`
 }
 
-func quotaIdentity(key string) (id, label string) {
+// quotaKeyID derives the stable, never-displayed credential id used for
+// auth-file matching and sessionStorage cache keys.
+func quotaKeyID(key string) string {
 	digest := sha256.Sum256([]byte(key))
-	hash := hex.EncodeToString(digest[:])
-	return "opencode-go-key-" + hash, "OpenCode Go credential " + hash[:12]
+	return "opencode-go-key-" + hex.EncodeToString(digest[:])
+}
+
+// defaultLabel identifies a credential by the last few characters of its
+// actual key value (masking the rest) instead of an opaque content hash, so
+// a tile is recognizable at a glance against the key you actually configured
+// — the same masking convention as Stripe/GitHub token displays.
+func defaultLabel(key string) string {
+	suffix := key
+	if len(key) > 4 {
+		suffix = key[len(key)-4:]
+	}
+	return "key …" + suffix
+}
+
+// keyLabel resolves the display label for a configured key: an explicit
+// per-key label from config wins, otherwise the masked-key fallback.
+func keyLabel(key config.APIKey) string {
+	if key.Label != "" {
+		return key.Label
+	}
+	return defaultLabel(key.Value)
 }
 
 func (m *Manager) HandleManagement(ctx context.Context, req pluginapi.ManagementRequest) (pluginapi.ManagementResponse, error) {
@@ -78,13 +100,12 @@ func (m *Manager) HandleManagement(ctx context.Context, req pluginapi.Management
 	if body.KeyID == "" {
 		cards := make([]quotaCard, 0, len(keys))
 		for _, key := range keys {
-			id, label := quotaIdentity(key.Value)
-			cards = append(cards, quotaCard{KeyID: id, Label: label})
+			cards = append(cards, quotaCard{KeyID: quotaKeyID(key.Value), Label: keyLabel(key)})
 		}
 		return quotaJSON(quotaList{Cards: cards})
 	}
 	for _, key := range keys {
-		id, label := quotaIdentity(key.Value)
+		id := quotaKeyID(key.Value)
 		if id != body.KeyID {
 			continue
 		}
@@ -92,7 +113,7 @@ func (m *Manager) HandleManagement(ctx context.Context, req pluginapi.Management
 		if err != nil {
 			return pluginapi.ManagementResponse{StatusCode: http.StatusBadGateway, Body: []byte(`{"error":"quota refresh failed"}`)}, nil
 		}
-		return quotaJSON(quotaCard{KeyID: id, Label: label, Usage: &usage})
+		return quotaJSON(quotaCard{KeyID: id, Label: keyLabel(key), Usage: &usage})
 	}
 	return pluginapi.ManagementResponse{StatusCode: http.StatusNotFound, Body: []byte(`{"error":"unknown quota key"}`)}, nil
 }
