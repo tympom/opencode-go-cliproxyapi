@@ -234,3 +234,11 @@ func TestQuotaPageUsesNativeQuotaStylesAndThemeBridge(t *testing.T) {
 func mustHashPrefix(key string) string {
 	return strings.TrimPrefix(quotaKeyID(key), "opencode-go-key-")
 }
+
+func mustAuthFileName(key config.APIKey, hash string) string {
+	name, collision := authFileName(key, hash, map[string]struct{}{})
+	if collision {
+		panic("unexpected name collision")
+	}
+	return name
+}

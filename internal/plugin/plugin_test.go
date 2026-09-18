@@ -514,7 +514,7 @@ func TestLifecycleMaterializesDeterministicAuthRecords(t *testing.T) {
 		}
 		hash := sha256.Sum256([]byte(record.APIKey))
 		wantHash := hex.EncodeToString(hash[:])
-		if record.Type != ProviderID || record.ID != "opencode-go-key-"+wantHash || record.Label != defaultLabel(record.APIKey) || wire.Name != authFileName(record.Label, wantHash) {
+		if record.Type != ProviderID || record.ID != "opencode-go-key-"+wantHash || record.Label != defaultLabel(record.APIKey) || wire.Name != mustAuthFileName(config.APIKey{Value: record.APIKey}, wantHash) {
 			t.Fatalf("record identity = %+v name=%q", record, wire.Name)
 		}
 		if record.APIKey == "" || strings.Contains(wire.Name, record.APIKey) || strings.Contains(record.ID, record.APIKey) {
@@ -593,7 +593,7 @@ func TestLifecycleMigratesLegacyAuthFileNames(t *testing.T) {
 	if err := json.Unmarshal(calls[0].payload, &wire); err != nil {
 		t.Fatal(err)
 	}
-	want := authFileName(defaultLabel(testKey), fullHash)
+	want := mustAuthFileName(config.APIKey{Value: testKey}, fullHash)
 	if wire.Name != want {
 		t.Fatalf("migrated record name = %q, want %q", wire.Name, want)
 	}

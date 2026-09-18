@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.11"
+	pluginVersion = "0.1.12"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -321,9 +321,10 @@ func (m *Manager) handleLifecycle(request []byte) ([]byte, error) {
 // derives a credential's identity from its FILE NAME (authIDForPath/upsert
 // key records by file name and ignore the record's id/label fields on
 // list), so the file name is the dedup key here too: labeled keys read
-// "opencode-go-<label>-<hash12>.json", unlabeled ones
-// "opencode-go-key-<hash12>.json" — human-friendly but still unique per key
-// (a bare label would let two same-labeled keys overwrite each other).
+// "opencode-go-<label>.json" — the bare label, nothing else; unlabeled ones
+// fall back to the masked key suffix ("opencode-go-key-Xf9a.json"). When two
+// keys resolve to the same name, the second carries a 12-hex disambiguator
+// so same-labeled (or same-suffix) keys cannot overwrite each other.
 // Records materialized by older versions under the full 64-hex name are
 // migrated on first sight by saving under the new name; the stale file
 // cannot be deleted through the host ABI and must be removed manually once.
@@ -345,11 +346,17 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 			existing[strings.TrimSuffix(name, ".json")] = struct{}{}
 		}
 	}
+	claimed := make(map[string]struct{}, len(cfg.APIKeys))
 	for _, key := range cfg.APIKeys {
 		digest := sha256.Sum256([]byte(key.Value))
 		hash := hex.EncodeToString(digest[:])
 		id := "opencode-go-key-" + hash
-		name := authFileName(keyLabel(key), hash)
+		name, collision := authFileName(key, hash, claimed)
+		if name == "" || collision {
+			// More than two keys collapsed onto the same name: nothing
+			// sane left to call it; skip rather than overwrite a sibling.
+			continue
+		}
 		if _, ok := existing[name]; ok {
 			continue
 		}
@@ -375,12 +382,38 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 	return nil
 }
 
-// authFileName derives the credential file name from the display label plus a
-// 12-hex disambiguator of the full key digest: labeled keys are readable
-// ("opencode-go-work-a1b2c3d4e5f6.json"), unlabeled ones stay masked
-// ("opencode-go-key-a1b2c3d4e5f6.json"). The label slug is restricted to
+// authFileName derives the credential file name from the key's display label
+// alone — "opencode-go-work.json" — with no hash suffix in the normal case.
+// Unlabeled keys fall back to the masked key suffix
+// ("opencode-go-key-Xf9a.json"). When two keys resolve to the same name
+// within one registration (duplicate labels, or two keys sharing a last-4
+// suffix), the second gets a 12-hex disambiguator so it cannot overwrite its
+// sibling; a third is skipped. The label slug is restricted to
 // host-filename-safe characters ([A-Za-z0-9._-]).
-func authFileName(label, hash string) string {
+func authFileName(key config.APIKey, hash string, claimed map[string]struct{}) (string, bool) {
+	base := "opencode-go-key-"
+	if key.Label != "" {
+		if slug := slugLabel(key.Label); slug != "" {
+			base = "opencode-go-" + slug
+		} else {
+			base += tail(key.Value)
+		}
+	} else {
+		base += tail(key.Value)
+	}
+	name := base + ".json"
+	if _, taken := claimed[name]; taken {
+		name = base + "-" + hash[:12] + ".json"
+		if _, taken := claimed[name]; taken {
+			return "", true
+		}
+	}
+	claimed[name] = struct{}{}
+	return name, false
+}
+
+// slugLabel reduces a display label to host-filename-safe characters.
+func slugLabel(label string) string {
 	var b strings.Builder
 	for _, r := range label {
 		switch {
@@ -390,12 +423,15 @@ func authFileName(label, hash string) string {
 			b.WriteRune('-')
 		}
 	}
-	slug := b.String()
-	prefix := "opencode-go-key"
-	if slug != "" && !strings.HasPrefix(label, "key ") {
-		prefix = "opencode-go-" + slug
+	return b.String()
+}
+
+// tail returns the masked last characters of a key value.
+func tail(key string) string {
+	if len(key) > 4 {
+		key = key[len(key)-4:]
 	}
-	return prefix + "-" + hash[:12] + ".json"
+	return slugLabel(key)
 }
 
 // handleModels implements model.static / model.for_auth (FR-003): the last
