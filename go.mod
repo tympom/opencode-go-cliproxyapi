@@ -1,6 +1,6 @@
 module opencode-go-cliproxyapi
 
-go 1.26.7
+go 1.27.1
 
 require (
 	github.com/router-for-me/CLIProxyAPI/v7 v7.2.138
