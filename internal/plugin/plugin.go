@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.10"
+	pluginVersion = "0.1.11"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -177,7 +177,22 @@ func registrationEnvelope() []byte {
 			Version:          pluginVersion,
 			Author:           pluginName,
 			GitHubRepository: githubRepoURL,
-			ConfigFields:     []pluginapi.ConfigField{},
+			ConfigFields: []pluginapi.ConfigField{
+				{Name: "base-url", Type: pluginapi.ConfigFieldTypeString, Description: "OpenCode Go upstream base URL (default https://opencode.ai/zen/go/v1)."},
+				{Name: "catalog-url", Type: pluginapi.ConfigFieldTypeString, Description: "Optional catalog endpoint override (default {base-url}/models)."},
+				{Name: "api-keys", Type: pluginapi.ConfigFieldTypeArray, Description: "OpenCode Go API keys with optional per-key label (- value: \"...\", label: \"...\")."},
+				{Name: "model-prefix.enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Prefix client-facing model IDs with the provider name (default true)."},
+				{Name: "model-prefix.value", Type: pluginapi.ConfigFieldTypeString, Description: "Provider prefix used when prefixing is enabled (default opencode-go)."},
+				{Name: "catalog.refresh-interval", Type: pluginapi.ConfigFieldTypeString, Description: "Catalog discovery refresh cadence, minimum 1m (default 15m)."},
+				{Name: "catalog.stale-while-unavailable", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Serve the last good catalog snapshot when a refresh fails (default true)."},
+				{Name: "protocols.chat-completions", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable models routed to /v1/chat/completions (default true)."},
+				{Name: "protocols.messages", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable models routed to /v1/messages (default true)."},
+				{Name: "protocols.responses", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable models routed to /v1/responses (default true)."},
+				{Name: "request-timeout", Type: pluginapi.ConfigFieldTypeString, Description: "Upstream request timeout (default 5m)."},
+				{Name: "max-response-bytes", Type: pluginapi.ConfigFieldTypeInteger, Description: "Maximum non-streaming response body size in bytes (default 64 MiB)."},
+				{Name: "allow-http", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Allow http:// base-url/catalog-url for local testing (default false)."},
+				{Name: "route-overrides", Type: pluginapi.ConfigFieldTypeObject, Description: "Explicit per-model route overrides: protocol (chat-completions|messages|responses) and endpoint."},
+			},
 		},
 		Capabilities: capabilities{
 			ModelProvider:         true,
@@ -302,11 +317,16 @@ func (m *Manager) handleLifecycle(request []byte) ([]byte, error) {
 	return registrationEnvelope(), nil
 }
 
-// materializeAuthRecords makes CPA-visible auth files idempotently. Existing
-// records are discovered through CPA so their host-managed metadata is never
-// overwritten. The full key digest is non-secret and independent of config
-// ordering. The host ABI has no delete/disable callback, so removed keys remain
-// stale records and are not claimed as removed.
+// materializeAuthRecords makes CPA-visible auth files idempotently. The host
+// derives a credential's identity from its FILE NAME (authIDForPath/upsert
+// key records by file name and ignore the record's id/label fields on
+// list), so the file name is the dedup key here too: labeled keys read
+// "opencode-go-<label>-<hash12>.json", unlabeled ones
+// "opencode-go-key-<hash12>.json" — human-friendly but still unique per key
+// (a bare label would let two same-labeled keys overwrite each other).
+// Records materialized by older versions under the full 64-hex name are
+// migrated on first sight by saving under the new name; the stale file
+// cannot be deleted through the host ABI and must be removed manually once.
 func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config) error {
 	if m.bridge == nil {
 		return nil
@@ -315,41 +335,67 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 	if err != nil {
 		return fmt.Errorf("list existing auth records: %w", err)
 	}
-	labels := make(map[string]string, len(entries))
+	existing := make(map[string]struct{}, len(entries)*2)
 	for _, entry := range entries {
-		if id := strings.TrimSpace(entry.ID); id != "" {
-			if label := strings.TrimSpace(entry.Label); label != "" {
-				labels[id] = label
+		for _, name := range []string{strings.TrimSpace(entry.Name), strings.TrimSpace(entry.ID)} {
+			if name == "" {
+				continue
 			}
+			existing[name] = struct{}{}
+			existing[strings.TrimSuffix(name, ".json")] = struct{}{}
 		}
 	}
 	for _, key := range cfg.APIKeys {
 		digest := sha256.Sum256([]byte(key.Value))
 		hash := hex.EncodeToString(digest[:])
 		id := "opencode-go-key-" + hash
-		name := id + ".json"
-		label := keyLabel(key)
-		if labels[id] != label {
-			record, err := json.Marshal(struct {
-				Type   string `json:"type"`
-				ID     string `json:"id"`
-				Label  string `json:"label"`
-				APIKey string `json:"api_key"`
-			}{
-				Type: "opencode-go", ID: id, Label: label, APIKey: key.Value,
-			})
-			if err != nil {
-				return fmt.Errorf("build auth record")
-			}
-			if err := m.bridge.AuthSave(ctx, pluginapi.HostAuthSaveRequest{
-				Name: name, JSON: record,
-			}); err != nil {
-				return err
-			}
-			debugTrace("auth materialized id=%s file=%s label_set=%t", id, name, labels[id] != "")
+		name := authFileName(keyLabel(key), hash)
+		if _, ok := existing[name]; ok {
+			continue
 		}
+		record, err := json.Marshal(struct {
+			Type   string `json:"type"`
+			ID     string `json:"id"`
+			Label  string `json:"label"`
+			APIKey string `json:"api_key"`
+		}{
+			Type: "opencode-go", ID: id, Label: keyLabel(key), APIKey: key.Value,
+		})
+		if err != nil {
+			return fmt.Errorf("build auth record")
+		}
+		if err := m.bridge.AuthSave(ctx, pluginapi.HostAuthSaveRequest{
+			Name: name, JSON: record,
+		}); err != nil {
+			return err
+		}
+		_, legacy := existing[id+".json"]
+		debugTrace("auth materialized id=%s file=%s migrated_from_legacy=%t", id, name, legacy)
 	}
 	return nil
+}
+
+// authFileName derives the credential file name from the display label plus a
+// 12-hex disambiguator of the full key digest: labeled keys are readable
+// ("opencode-go-work-a1b2c3d4e5f6.json"), unlabeled ones stay masked
+// ("opencode-go-key-a1b2c3d4e5f6.json"). The label slug is restricted to
+// host-filename-safe characters ([A-Za-z0-9._-]).
+func authFileName(label, hash string) string {
+	var b strings.Builder
+	for _, r := range label {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
+			b.WriteRune(r)
+		default:
+			b.WriteRune('-')
+		}
+	}
+	slug := b.String()
+	prefix := "opencode-go-key"
+	if slug != "" && !strings.HasPrefix(label, "key ") {
+		prefix = "opencode-go-" + slug
+	}
+	return prefix + "-" + hash[:12] + ".json"
 }
 
 // handleModels implements model.static / model.for_auth (FR-003): the last

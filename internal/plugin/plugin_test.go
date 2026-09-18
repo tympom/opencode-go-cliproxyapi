@@ -430,8 +430,13 @@ func TestRegisterSuccessPublishesModels(t *testing.T) {
 		t.Fatalf("schema_version = %d, want %d", reg.SchemaVersion, pluginabi.SchemaVersion)
 	}
 	if reg.Metadata.Name != pluginName || reg.Metadata.Version != pluginVersion ||
-		len(reg.Metadata.ConfigFields) != 0 {
+		len(reg.Metadata.ConfigFields) == 0 {
 		t.Fatalf("metadata wrong: %+v", reg.Metadata)
+	}
+	for _, field := range reg.Metadata.ConfigFields {
+		if field.Name == "" || field.Type == "" || field.Description == "" {
+			t.Fatalf("incomplete config field: %+v", field)
+		}
 	}
 	if !reg.Capabilities.ModelProvider || !reg.Capabilities.AuthProvider {
 		t.Fatalf("capabilities wrong: %+v", reg.Capabilities)
@@ -509,7 +514,7 @@ func TestLifecycleMaterializesDeterministicAuthRecords(t *testing.T) {
 		}
 		hash := sha256.Sum256([]byte(record.APIKey))
 		wantHash := hex.EncodeToString(hash[:])
-		if record.Type != ProviderID || record.ID != "opencode-go-key-"+wantHash || record.Label != defaultLabel(record.APIKey) || wire.Name != record.ID+".json" {
+		if record.Type != ProviderID || record.ID != "opencode-go-key-"+wantHash || record.Label != defaultLabel(record.APIKey) || wire.Name != authFileName(record.Label, wantHash) {
 			t.Fatalf("record identity = %+v name=%q", record, wire.Name)
 		}
 		if record.APIKey == "" || strings.Contains(wire.Name, record.APIKey) || strings.Contains(record.ID, record.APIKey) {
@@ -567,13 +572,14 @@ func TestLifecycleUsesCPAAuthListAfterManagerRestart(t *testing.T) {
 	}
 }
 
-func TestLifecycleHealsStaleAuthRecordLabels(t *testing.T) {
+func TestLifecycleMigratesLegacyAuthFileNames(t *testing.T) {
 	f := &fakeCaller{responder: catalogResponder(true, testCatalogJSON)}
-	// Seed the auth store with a stale v0.1.8-style record: same key, old
-	// full-hash label. A register must re-save it with the new label.
+	// Seed the auth store with a legacy v0.1.8-style record under the full
+	// 64-hex file name. A register must migrate it: save once under the new
+	// human-readable name, and not re-save on the next register.
 	digest := sha256.Sum256([]byte(testKey))
-	id := "opencode-go-key-" + hex.EncodeToString(digest[:])
-	f.authFiles = map[string]string{id + ".json": "OpenCode Go credential " + hex.EncodeToString(digest[:])}
+	fullHash := hex.EncodeToString(digest[:])
+	f.authFiles = map[string]string{"opencode-go-key-" + fullHash + ".json": ""}
 	m := NewManager(NewHostBridge(f.call))
 	t.Cleanup(func() { _, _ = m.HandleCall("plugin.shutdown", nil) })
 	if _, err := m.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML)); err != nil {
@@ -581,26 +587,28 @@ func TestLifecycleHealsStaleAuthRecordLabels(t *testing.T) {
 	}
 	calls := f.callsOf(pluginabi.MethodHostAuthSave)
 	if len(calls) != 1 {
-		t.Fatalf("heal auth saves = %d, want 1", len(calls))
+		t.Fatalf("migration auth saves = %d, want 1", len(calls))
 	}
 	var wire pluginapi.HostAuthSaveRequest
 	if err := json.Unmarshal(calls[0].payload, &wire); err != nil {
 		t.Fatal(err)
 	}
-	var record struct {
-		Label string `json:"label"`
+	want := authFileName(defaultLabel(testKey), fullHash)
+	if wire.Name != want {
+		t.Fatalf("migrated record name = %q, want %q", wire.Name, want)
 	}
-	if err := json.Unmarshal(wire.JSON, &record); err != nil || record.Label != defaultLabel(testKey) {
-		t.Fatalf("healed record label = %q, want %q (err=%v)", record.Label, defaultLabel(testKey), err)
+	if strings.Contains(wire.Name, fullHash) {
+		t.Fatalf("migrated name exposes full digest: %q", wire.Name)
 	}
-	// Second register with no changes: label now matches, no further saves.
+	// Second register: new name already present, no further saves (the
+	// legacy file cannot be deleted through the host ABI and stays).
 	second := NewManager(NewHostBridge(f.call))
 	t.Cleanup(func() { _, _ = second.HandleCall("plugin.shutdown", nil) })
 	if _, err := second.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML)); err != nil {
 		t.Fatalf("second register: %v", err)
 	}
 	if got := len(f.callsOf(pluginabi.MethodHostAuthSave)); got != 1 {
-		t.Fatalf("saves after healed label = %d, want 1", got)
+		t.Fatalf("saves after migration = %d, want 1", got)
 	}
 }
 
