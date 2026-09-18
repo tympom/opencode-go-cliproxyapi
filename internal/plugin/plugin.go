@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.9"
+	pluginVersion = "0.1.10"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -315,13 +315,12 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 	if err != nil {
 		return fmt.Errorf("list existing auth records: %w", err)
 	}
-	existing := make(map[string]struct{}, len(entries)*2)
+	labels := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		if name := strings.TrimSpace(entry.Name); name != "" {
-			existing[name] = struct{}{}
-		}
 		if id := strings.TrimSpace(entry.ID); id != "" {
-			existing[id] = struct{}{}
+			if label := strings.TrimSpace(entry.Label); label != "" {
+				labels[id] = label
+			}
 		}
 	}
 	for _, key := range cfg.APIKeys {
@@ -329,31 +328,26 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 		hash := hex.EncodeToString(digest[:])
 		id := "opencode-go-key-" + hash
 		name := id + ".json"
-		if _, ok := existing[id]; ok {
-			continue
+		label := keyLabel(key)
+		if labels[id] != label {
+			record, err := json.Marshal(struct {
+				Type   string `json:"type"`
+				ID     string `json:"id"`
+				Label  string `json:"label"`
+				APIKey string `json:"api_key"`
+			}{
+				Type: "opencode-go", ID: id, Label: label, APIKey: key.Value,
+			})
+			if err != nil {
+				return fmt.Errorf("build auth record")
+			}
+			if err := m.bridge.AuthSave(ctx, pluginapi.HostAuthSaveRequest{
+				Name: name, JSON: record,
+			}); err != nil {
+				return err
+			}
+			debugTrace("auth materialized id=%s file=%s label_set=%t", id, name, labels[id] != "")
 		}
-		if _, ok := existing[name]; ok {
-			continue
-		}
-		record, err := json.Marshal(struct {
-			Type   string `json:"type"`
-			ID     string `json:"id"`
-			Label  string `json:"label"`
-			APIKey string `json:"api_key"`
-		}{
-			Type: "opencode-go", ID: id, Label: keyLabel(key), APIKey: key.Value,
-		})
-		if err != nil {
-			return fmt.Errorf("build auth record")
-		}
-		if err := m.bridge.AuthSave(ctx, pluginapi.HostAuthSaveRequest{
-			Name: name, JSON: record,
-		}); err != nil {
-			return err
-		}
-		existing[id] = struct{}{}
-		existing[name] = struct{}{}
-		debugTrace("auth materialized id=%s file=%s", id, name)
 	}
 	return nil
 }

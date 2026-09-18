@@ -41,7 +41,7 @@ type fakeCaller struct {
 	mu        sync.Mutex
 	calls     []capturedCall
 	responder func(method string, payload []byte) ([]byte, error)
-	authFiles map[string]struct{}
+	authFiles map[string]string
 }
 
 func (f *fakeCaller) call(method string, payload []byte) ([]byte, error) {
@@ -61,11 +61,15 @@ func (f *fakeCaller) call(method string, payload []byte) ([]byte, error) {
 	if method == pluginabi.MethodHostAuthSave && err == nil && hostEnvelopeOK(raw) {
 		var req pluginapi.HostAuthSaveRequest
 		if json.Unmarshal(payload, &req) == nil && strings.TrimSpace(req.Name) != "" {
+			var record struct {
+				Label string `json:"label"`
+			}
+			_ = json.Unmarshal(req.JSON, &record)
 			f.mu.Lock()
 			if f.authFiles == nil {
-				f.authFiles = make(map[string]struct{})
+				f.authFiles = make(map[string]string)
 			}
-			f.authFiles[req.Name] = struct{}{}
+			f.authFiles[req.Name] = record.Label
 			f.mu.Unlock()
 		}
 	}
@@ -93,9 +97,9 @@ func hasExplicitAuthList(raw []byte) bool {
 func (f *fakeCaller) authListResponse() []byte {
 	f.mu.Lock()
 	files := make([]pluginapi.HostAuthFileEntry, 0, len(f.authFiles))
-	for name := range f.authFiles {
+	for name, label := range f.authFiles {
 		files = append(files, pluginapi.HostAuthFileEntry{
-			ID: strings.TrimSuffix(name, ".json"), Name: name, Source: "file", Path: name,
+			ID: strings.TrimSuffix(name, ".json"), Name: name, Label: label, Source: "file", Path: name,
 		})
 	}
 	f.mu.Unlock()
@@ -560,6 +564,43 @@ func TestLifecycleUsesCPAAuthListAfterManagerRestart(t *testing.T) {
 	}
 	if got := len(f.callsOf(pluginabi.MethodHostAuthSave)); got != 1 {
 		t.Fatalf("auth saves after manager restart = %d, want 1", got)
+	}
+}
+
+func TestLifecycleHealsStaleAuthRecordLabels(t *testing.T) {
+	f := &fakeCaller{responder: catalogResponder(true, testCatalogJSON)}
+	// Seed the auth store with a stale v0.1.8-style record: same key, old
+	// full-hash label. A register must re-save it with the new label.
+	digest := sha256.Sum256([]byte(testKey))
+	id := "opencode-go-key-" + hex.EncodeToString(digest[:])
+	f.authFiles = map[string]string{id + ".json": "OpenCode Go credential " + hex.EncodeToString(digest[:])}
+	m := NewManager(NewHostBridge(f.call))
+	t.Cleanup(func() { _, _ = m.HandleCall("plugin.shutdown", nil) })
+	if _, err := m.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML)); err != nil {
+		t.Fatalf("register: %v", err)
+	}
+	calls := f.callsOf(pluginabi.MethodHostAuthSave)
+	if len(calls) != 1 {
+		t.Fatalf("heal auth saves = %d, want 1", len(calls))
+	}
+	var wire pluginapi.HostAuthSaveRequest
+	if err := json.Unmarshal(calls[0].payload, &wire); err != nil {
+		t.Fatal(err)
+	}
+	var record struct {
+		Label string `json:"label"`
+	}
+	if err := json.Unmarshal(wire.JSON, &record); err != nil || record.Label != defaultLabel(testKey) {
+		t.Fatalf("healed record label = %q, want %q (err=%v)", record.Label, defaultLabel(testKey), err)
+	}
+	// Second register with no changes: label now matches, no further saves.
+	second := NewManager(NewHostBridge(f.call))
+	t.Cleanup(func() { _, _ = second.HandleCall("plugin.shutdown", nil) })
+	if _, err := second.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML)); err != nil {
+		t.Fatalf("second register: %v", err)
+	}
+	if got := len(f.callsOf(pluginabi.MethodHostAuthSave)); got != 1 {
+		t.Fatalf("saves after healed label = %d, want 1", got)
 	}
 }
 
