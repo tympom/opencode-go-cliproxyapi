@@ -2,8 +2,8 @@
   "schema_version": 1,
   "plugins": [
     {
-      "id": "opencode-go-cliproxyapi",
-      "name": "OpenCode Go",
+      "id": "opencode-go-clpx",
+      "name": "OpenCode Go (tympom fork)",
       "description": "Exposes OpenCode Go as a single unified provider (opencode-go) in CLIProxyAPI, translating across OpenAI Chat Completions, Anthropic Messages, and OpenAI Responses with shared key pooling, rotation, and cooldowns.",
       "author": "tympom",
       "version": "0.1.7",

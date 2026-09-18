@@ -23,7 +23,7 @@ const ProviderID = "opencode-go"
 
 // pluginName / pluginVersion are reported in registration metadata.
 const (
-	pluginName    = "opencode-go-cliproxyapi"
+	pluginName    = "opencode-go-clpx"
 	pluginVersion = "0.1.7"
 )
 
