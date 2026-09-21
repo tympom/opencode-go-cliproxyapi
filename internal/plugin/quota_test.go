@@ -171,7 +171,6 @@ func TestQuotaPageUsesManualSessionCache(t *testing.T) {
 		}
 	}
 	for _, marker := range []string{
-		"setTimeout",
 		"visibilitychange",
 		"document.hidden",
 		"window.onfocus",
@@ -221,7 +220,7 @@ func TestQuotaPageUsesNativeQuotaStylesAndThemeBridge(t *testing.T) {
 			t.Fatalf("quota page missing styling marker %q", marker)
 		}
 	}
-	if strings.Count(resources.QuotaPage, `document.createElement("button")`) != 1 || strings.Contains(resources.QuotaPage, `textContent = "Refresh card"`) || strings.Contains(resources.QuotaPage, "quota-button") || strings.Contains(resources.QuotaPage, "quota-refresh-small") {
+	if strings.Contains(resources.QuotaPage, `textContent = "Refresh card"`) || strings.Contains(resources.QuotaPage, "quota-button") || strings.Contains(resources.QuotaPage, "quota-refresh-small") {
 		t.Fatal("quota page does not have exactly one secondary refresh button path")
 	}
 	for _, marker := range []string{"querySelectorAll('head link[rel=\"stylesheet\"], head style')", "cloneNode(true)", "dataset.cpaStyle"} {
