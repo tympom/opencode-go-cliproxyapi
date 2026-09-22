@@ -106,12 +106,21 @@ func UpstreamFallback(msg string) *Error {
 // message. Re-redacting at the envelope edge is INTENTIONAL defense-in-depth:
 // constructors already redact (so non-envelope consumers — logs, executor
 // fail paths reading .Message directly) are safe, and Redact is idempotent.
+// Client-fault errors without an explicit status default to HTTP 400 so the
+// host does not mistake invalid input for a credential failure.
 func ToEnvelopeError(e *Error) pluginabi.Error {
+	status := e.StatusCode
+	if status == 0 {
+		switch e.Class {
+		case ClassUnsupported, ClassTranslation:
+			status = 400
+		}
+	}
 	return pluginabi.Error{
 		Code:       string(e.Class),
 		Message:    Redact(e.Message),
 		Retryable:  e.Retryable,
-		HTTPStatus: e.StatusCode,
+		HTTPStatus: status,
 	}
 }
 

@@ -911,9 +911,9 @@ func (r *ResponsesRequest) DecodeInstructions() (string, *errclass.Error) {
 }
 
 // DecodeInputItems decodes the input field into item form: an item array
-// passes through, a plain JSON string surfaces as one synthesized
-// user-message item carrying the raw string bytes — each builder's
-// message pipeline renders it exactly as its former inline string branch
+// infers message types for untyped items with nonblank roles; a plain JSON
+// string surfaces as one synthesized user-message item carrying the raw string
+// bytes — each builder's message pipeline renders it exactly as its former inline string branch
 // did, including dropping the empty string — and absent or null decodes
 // to zero items. Any other shape is a translation failure. One kernel owns
 // the string-or-items discrimination for both Responses-source builders so
@@ -929,6 +929,11 @@ func (r *ResponsesRequest) DecodeInputItems() ([]RespItem, *errclass.Error) {
 	var items []RespItem
 	if err := json.Unmarshal(r.Input, &items); err != nil {
 		return nil, errclass.Translation("input must be a string or an array of items: " + err.Error())
+	}
+	for i := range items {
+		if items[i].Type == "" && strings.TrimSpace(items[i].Role) != "" {
+			items[i].Type = "message"
+		}
 	}
 	return items, nil
 }

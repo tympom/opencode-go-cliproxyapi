@@ -129,6 +129,33 @@ func TestToEnvelopeError(t *testing.T) {
 	if got != want {
 		t.Errorf("ToEnvelopeError = %+v, want %+v", got, want)
 	}
+
+	// Client-fault errors must not trigger credential cooldown.
+	unsupported := &Error{Class: ClassUnsupported, Message: "unsupported input"}
+	got = ToEnvelopeError(unsupported)
+	if got.HTTPStatus != 400 || got.Code != "unsupported_protocol_or_parameter" {
+		t.Errorf("ToEnvelopeError(unsupported) = %+v, want HTTPStatus 400", got)
+	}
+
+	translation := Translation("cannot map tool calls")
+	got = ToEnvelopeError(translation)
+	if got.HTTPStatus != 400 || got.Code != "translation_failure" {
+		t.Errorf("ToEnvelopeError(translation) = %+v, want HTTPStatus 400", got)
+	}
+
+	// Explicit status codes take precedence over the client-error default.
+	explicit := &Error{Class: ClassUnsupported, Message: "bad param", StatusCode: 422}
+	got = ToEnvelopeError(explicit)
+	if got.HTTPStatus != 422 {
+		t.Errorf("ToEnvelopeError(explicit) = %+v, want HTTPStatus 422", got)
+	}
+
+	// Unrelated error classes retain their existing classification.
+	netErr := FromNetwork(errors.New("connection reset"))
+	got = ToEnvelopeError(netErr)
+	if got.HTTPStatus != 0 {
+		t.Errorf("ToEnvelopeError(network) = %+v, want HTTPStatus 0", got)
+	}
 }
 
 func TestRedact(t *testing.T) {

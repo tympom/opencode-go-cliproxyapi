@@ -1308,6 +1308,27 @@ func TestResponsesRequestDecodeHelpers(t *testing.T) {
 		t.Errorf("array input = %+v, %v", items, eErr)
 	}
 
+	// Role-bearing items may omit type or explicitly leave it empty.
+	var inferIn ResponsesRequest
+	if err := json.Unmarshal([]byte(
+		`{"input":[{"role":"user","content":"say ok"},{"type":"","role":"assistant","content":"ok"}]}`), &inferIn); err != nil {
+		t.Fatal(err)
+	}
+	items, eErr = inferIn.DecodeInputItems()
+	if eErr != nil || len(items) != 2 || items[0].Type != "message" || items[1].Type != "message" {
+		t.Errorf("inferred message type = %+v, %v", items, eErr)
+	}
+
+	// A blank role does not make an untyped item a message.
+	var untypedIn ResponsesRequest
+	if err := json.Unmarshal([]byte(`{"input":[{"type":"","role":"  "}]}`), &untypedIn); err != nil {
+		t.Fatal(err)
+	}
+	items, eErr = untypedIn.DecodeInputItems()
+	if eErr != nil || len(items) != 1 || items[0].Type != "" {
+		t.Errorf("untyped item = %+v, %v", items, eErr)
+	}
+
 	var badInstr ResponsesRequest
 	if err := json.Unmarshal([]byte(`{"instructions":42}`), &badInstr); err != nil {
 		t.Fatal(err)
