@@ -71,7 +71,7 @@ All fields are also editable through the Management Center's plugin config UI (r
 
 - **Auth files**: each key gets a credential file named after its label (`opencode-go-work.json`); unlabeled keys fall back to a masked key suffix (`opencode-go-key-Xf9a.json`). Renaming a key's label creates a new auth file — remove the old one in Auth Files manually (the host plugin ABI has no delete callback).
 - **Quota page**: Management Center → OpenCode Go Quota. Cards are titled with each key's label; reset times render as `MM-DD HH:mm · in Xd Yh` (same formatting as CPA's native quota UI). Page load never contacts upstream; each card refreshes manually.
-- Requires CLIProxyAPI `v7.2.138+` and a CGO-enabled build (Go 1.24+).
+- Requires CLIProxyAPI `v7.2.138+` and a CGO-enabled build (Go 1.27.1+).
 
 ## Changes vs upstream (`massiveits/opencode-go-cliproxyapi`)
 
