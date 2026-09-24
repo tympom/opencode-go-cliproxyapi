@@ -1308,7 +1308,7 @@ func TestResponsesRequestDecodeHelpers(t *testing.T) {
 		t.Errorf("array input = %+v, %v", items, eErr)
 	}
 
-	// Role-bearing items may omit type or explicitly leave it empty.
+	// Issue #1: Missing or empty type with a non-empty role infers "message".
 	var inferIn ResponsesRequest
 	if err := json.Unmarshal([]byte(
 		`{"input":[{"role":"user","content":"say ok"},{"type":"","role":"assistant","content":"ok"}]}`), &inferIn); err != nil {
@@ -1319,7 +1319,7 @@ func TestResponsesRequestDecodeHelpers(t *testing.T) {
 		t.Errorf("inferred message type = %+v, %v", items, eErr)
 	}
 
-	// A blank role does not make an untyped item a message.
+	// An item without role and without type remains untyped.
 	var untypedIn ResponsesRequest
 	if err := json.Unmarshal([]byte(`{"input":[{"type":"","role":"  "}]}`), &untypedIn); err != nil {
 		t.Fatal(err)

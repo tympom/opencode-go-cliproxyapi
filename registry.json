@@ -6,7 +6,7 @@
       "name": "OpenCode Go (tympom fork)",
       "description": "Exposes OpenCode Go as a single unified provider (opencode-go) in CLIProxyAPI, translating across OpenAI Chat Completions, Anthropic Messages, and OpenAI Responses with shared key pooling, rotation, and cooldowns.",
       "author": "tympom",
-      "version": "0.1.14",
+      "version": "0.1.15",
       "repository": "https://github.com/tympom/opencode-go-cliproxyapi",
       "homepage": "https://github.com/tympom/opencode-go-cliproxyapi",
       "tags": ["provider", "opencode", "opencode-go"]

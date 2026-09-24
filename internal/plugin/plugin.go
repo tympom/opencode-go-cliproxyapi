@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.14"
+	pluginVersion = "0.1.15"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -168,6 +168,61 @@ type registrationResult struct {
 	Capabilities  capabilities       `json:"capabilities"`
 }
 
+func pluginConfigFields() []pluginapi.ConfigField {
+	return []pluginapi.ConfigField{
+		{
+			Name:        "api-keys",
+			Type:        pluginapi.ConfigFieldTypeArray,
+			Description: "List of OpenCode Go API keys (`- value: ...`, optional `label: ...`). Supports ${ENV_VAR} expansion.",
+		},
+		{
+			Name:        "base-url",
+			Type:        pluginapi.ConfigFieldTypeString,
+			Description: "Upstream base URL (default: https://opencode.ai/zen/go/v1).",
+		},
+		{
+			Name:        "catalog-url",
+			Type:        pluginapi.ConfigFieldTypeString,
+			Description: "Optional catalog discovery URL (default: {base-url}/models).",
+		},
+		{
+			Name:        "model-prefix",
+			Type:        pluginapi.ConfigFieldTypeObject,
+			Description: "Client-facing model ID prefix configuration (`enabled: bool`, `value: string`).",
+		},
+		{
+			Name:        "catalog",
+			Type:        pluginapi.ConfigFieldTypeObject,
+			Description: "Catalog discovery settings (`refresh-interval: string`, `stale-while-unavailable: bool`).",
+		},
+		{
+			Name:        "protocols",
+			Type:        pluginapi.ConfigFieldTypeObject,
+			Description: "Protocol enable/disable switches (`chat-completions: bool`, `messages: bool`, `responses: bool`).",
+		},
+		{
+			Name:        "route-overrides",
+			Type:        pluginapi.ConfigFieldTypeObject,
+			Description: "Explicit route overrides per model (`<model-id>: {protocol: string, endpoint: string}`).",
+		},
+		{
+			Name:        "request-timeout",
+			Type:        pluginapi.ConfigFieldTypeString,
+			Description: "Upstream HTTP request timeout (default: 5m).",
+		},
+		{
+			Name:        "max-response-bytes",
+			Type:        pluginapi.ConfigFieldTypeInteger,
+			Description: "Max non-streaming response body size in bytes (default: 67108864).",
+		},
+		{
+			Name:        "allow-http",
+			Type:        pluginapi.ConfigFieldTypeBoolean,
+			Description: "Allow plain http:// URLs for local testing/mocking (default: false).",
+		},
+	}
+}
+
 func registrationEnvelope() []byte {
 	formats := []string{"openai", "claude", "openai-response"}
 	return okEnvelope(registrationResult{
@@ -177,22 +232,7 @@ func registrationEnvelope() []byte {
 			Version:          pluginVersion,
 			Author:           pluginName,
 			GitHubRepository: githubRepoURL,
-			ConfigFields: []pluginapi.ConfigField{
-				{Name: "base-url", Type: pluginapi.ConfigFieldTypeString, Description: "OpenCode Go upstream base URL (default https://opencode.ai/zen/go/v1)."},
-				{Name: "catalog-url", Type: pluginapi.ConfigFieldTypeString, Description: "Optional catalog endpoint override (default {base-url}/models)."},
-				{Name: "api-keys", Type: pluginapi.ConfigFieldTypeArray, Description: "OpenCode Go API keys with optional per-key label (- value: \"...\", label: \"...\")."},
-				{Name: "model-prefix.enabled", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Prefix client-facing model IDs with the provider name (default true)."},
-				{Name: "model-prefix.value", Type: pluginapi.ConfigFieldTypeString, Description: "Provider prefix used when prefixing is enabled (default opencode-go)."},
-				{Name: "catalog.refresh-interval", Type: pluginapi.ConfigFieldTypeString, Description: "Catalog discovery refresh cadence, minimum 1m (default 15m)."},
-				{Name: "catalog.stale-while-unavailable", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Serve the last good catalog snapshot when a refresh fails (default true)."},
-				{Name: "protocols.chat-completions", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable models routed to /v1/chat/completions (default true)."},
-				{Name: "protocols.messages", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable models routed to /v1/messages (default true)."},
-				{Name: "protocols.responses", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Enable models routed to /v1/responses (default true)."},
-				{Name: "request-timeout", Type: pluginapi.ConfigFieldTypeString, Description: "Upstream request timeout (default 5m)."},
-				{Name: "max-response-bytes", Type: pluginapi.ConfigFieldTypeInteger, Description: "Maximum non-streaming response body size in bytes (default 64 MiB)."},
-				{Name: "allow-http", Type: pluginapi.ConfigFieldTypeBoolean, Description: "Allow http:// base-url/catalog-url for local testing (default false)."},
-				{Name: "route-overrides", Type: pluginapi.ConfigFieldTypeObject, Description: "Explicit per-model route overrides: protocol (chat-completions|messages|responses) and endpoint."},
-			},
+			ConfigFields:     pluginConfigFields(),
 		},
 		Capabilities: capabilities{
 			ModelProvider:         true,
