@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.16"
+	pluginVersion = "0.1.17"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -309,20 +309,25 @@ func (m *Manager) handleLifecycle(request []byte) ([]byte, error) {
 	m.lifeMu.Lock()
 	defer m.lifeMu.Unlock()
 	debugTrace("lifecycle config_loaded key_count=%d prefix_enabled=%t prefix=%s", len(cfg.APIKeys), cfg.ModelPrefix.Enabled, cfg.ModelPrefix.Value)
-	ctx, cancel := context.WithTimeout(context.Background(), registerRefreshTimeout)
-	defer cancel()
-	if err := m.materializeAuthRecords(ctx, cfg); err != nil {
-		return ErrEnvelope("auth_materialization_failed", err.Error()), nil
+	var mgr *catalog.Manager
+	var refreshErr error
+	if len(cfg.APIKeys) > 0 {
+		ctx, cancel := context.WithTimeout(context.Background(), registerRefreshTimeout)
+		defer cancel()
+		if err := m.materializeAuthRecords(ctx, cfg); err != nil {
+			return ErrEnvelope("auth_materialization_failed", err.Error()), nil
+		}
+		// A nil *HostBridge must not enter the interface as a typed nil.
+		var client catalog.HostClient
+		if m.bridge != nil {
+			client = m.bridge
+		}
+		mgr = catalog.New(cfg, client)
+		refreshErr = refreshOnce(context.Background(), mgr, m.bridge, registerRefreshTimeout, cfg)
+		debugTrace("lifecycle refresh_complete model_count=%d refresh_error=%t", len(mgr.Models()), refreshErr != nil)
+	} else {
+		mgr = catalog.New(cfg, nil)
 	}
-	// A nil *HostBridge must not enter the interface as a typed nil, or
-	// catalog's nil-client guard never fires and Refresh panics inside Do.
-	var client catalog.HostClient
-	if m.bridge != nil {
-		client = m.bridge
-	}
-	mgr := catalog.New(cfg, client)
-	refreshErr := refreshOnce(context.Background(), mgr, m.bridge, registerRefreshTimeout, cfg)
-	debugTrace("lifecycle refresh_complete model_count=%d refresh_error=%t", len(mgr.Models()), refreshErr != nil)
 
 	// Retire any running loop and wait for its exit outside m.mu: a mid-refresh
 	// tick must never stall readers holding RLock (F4). lifeMu keeps the
@@ -344,7 +349,7 @@ func (m *Manager) handleLifecycle(request []byte) ([]byte, error) {
 	// (stale-while-unavailable:false) no seed happens — same as the ticker
 	// failure path — so a reconfigure during an outage serves nothing until
 	// a refresh succeeds, honoring the operator's policy on BOTH paths.
-	if refreshErr != nil && cfg.Catalog.StaleWhileUnavailable && m.mgr != nil && len(m.mgr.Models()) > 0 {
+	if len(cfg.APIKeys) > 0 && refreshErr != nil && cfg.Catalog.StaleWhileUnavailable && m.mgr != nil && len(m.mgr.Models()) > 0 {
 		mgr.SeedFrom(m.mgr)
 	}
 	m.mgr = mgr
@@ -353,7 +358,11 @@ func (m *Manager) handleLifecycle(request []byte) ([]byte, error) {
 	interval := cfg.Catalog.RefreshInterval
 	m.mu.Unlock()
 
-	m.startRefreshLoop(cfg, mgr, interval, stop, done)
+	if len(cfg.APIKeys) == 0 {
+		close(done)
+	} else {
+		m.startRefreshLoop(cfg, mgr, interval, stop, done)
+	}
 	return registrationEnvelope(), nil
 }
 

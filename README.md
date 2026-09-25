@@ -34,7 +34,8 @@ plugins:
         enabled: true           # true -> "opencode-go/<model>", false -> bare "<model>" (default: true)
         value: "opencode-go"    # prefix name (default: "opencode-go")
 
-      # OpenCode Go API keys (at least one required). Supports ${ENV_VAR} expansion.
+      # OpenCode Go API keys. Supports ${ENV_VAR} expansion. With no keys the plugin still
+      # registers (so the Management Center config editor works) but serves no models.
       api-keys:
         - value: "sk-opencode-key-1"
           label: "work"                # optional display name; also names the auth file
@@ -65,7 +66,7 @@ plugins:
       allow-http: false                  # allow http:// scheme for local mock/testing (default: false)
 ```
 
-All fields are also editable through the Management Center's plugin config UI (registration publishes `ConfigFields`).
+All fields are also editable through the Management Center's plugin config UI (registration publishes `ConfigFields`). A fresh store install registers without keys, so you can add `api-keys` there (Plugins → Edit config) without touching `config.yaml` by hand.
 
 ### Notes
 

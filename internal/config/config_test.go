@@ -16,8 +16,7 @@ func requireErrContains(t *testing.T, err error, want string) {
 	}
 }
 
-// withKey satisfies the at-least-one-key rule (spec 04 §3) for fixtures
-// that target a later validation check.
+// withKey supplies a configured credential for fixtures targeting other validation.
 const withKey = "api-keys:\n  - value: sk-dummy\n"
 
 func TestLoadMinimalAppliesAllDefaults(t *testing.T) {
@@ -221,7 +220,6 @@ func TestLoadRejections(t *testing.T) {
 		{"invalid yaml syntax", "[unclosed", "decode config"},
 		{"unknown anchor has no line info", "request-timeout: *nope\n", "decode config: invalid YAML structure"},
 		{"bare-scalar api key never leaks", "api-keys:\n  - sk-live-secret-123\n", "decode config: invalid YAML structure"},
-		{"keyless config rejected", "", "api-keys: at least one key is required"},
 		{"request-timeout zero rejected", "request-timeout: 0s\n" + withKey, "request-timeout: must be positive"},
 		{
 			"duplicate route-override keys",

@@ -476,6 +476,31 @@ func TestRegisterSuccessPublishesModels(t *testing.T) {
 	}
 }
 
+func TestRegisterWithoutKeysThenConfigure(t *testing.T) {
+	m, f := newTestManager(catalogResponder(true, testCatalogJSON))
+	t.Cleanup(func() { _, _ = m.HandleCall("plugin.shutdown", nil) })
+
+	var reg registrationResult
+	decodeResult(t, mustHandle(t, m, "plugin.register", lifecycleRequestBody("")), &reg)
+	if len(reg.Metadata.ConfigFields) == 0 {
+		t.Fatal("unconfigured plugin cannot expose its visual config")
+	}
+	if len(f.recorded()) != 0 {
+		t.Fatal("unconfigured plugin made host calls")
+	}
+	var models pluginapi.ModelResponse
+	decodeResult(t, mustHandle(t, m, "model.static", nil), &models)
+	if len(models.Models) != 0 {
+		t.Fatalf("unconfigured plugin offered models: %+v", models.Models)
+	}
+
+	decodeResult(t, mustHandle(t, m, "plugin.reconfigure", lifecycleRequestBody(testValidYAML)), &reg)
+	decodeResult(t, mustHandle(t, m, "model.static", nil), &models)
+	if len(models.Models) != 1 || len(f.callsOf(pluginabi.MethodHostAuthSave)) != 1 {
+		t.Fatalf("configured plugin models=%v auth saves=%d", models.Models, len(f.callsOf(pluginabi.MethodHostAuthSave)))
+	}
+}
+
 func TestRegistrationConfigFields(t *testing.T) {
 	m, _ := newTestManager(catalogResponder(true, testCatalogJSON))
 	t.Cleanup(func() { _, _ = m.HandleCall("plugin.shutdown", nil) })
