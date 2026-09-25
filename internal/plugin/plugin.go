@@ -24,12 +24,12 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.19"
+	pluginVersion = "0.1.20"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
 // validPlugin rejects empty Metadata.GitHubRepository).
-const githubRepoURL = "https://github.com/massiveits/opencode-go-cliproxyapi"
+const githubRepoURL = "https://github.com/tympom/opencode-go-cliproxyapi"
 
 // logoURL is shown by the Management Center Plugins page.
 const logoURL = "https://raw.githubusercontent.com/tympom/opencode-go-cliproxyapi/main/assets/logo.svg"
