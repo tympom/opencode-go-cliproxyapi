@@ -219,7 +219,7 @@ func TestLoadRejections(t *testing.T) {
 	}{
 		{"invalid yaml syntax", "[unclosed", "decode config"},
 		{"unknown anchor has no line info", "request-timeout: *nope\n", "decode config: invalid YAML structure"},
-		{"bare-scalar api key never leaks", "api-keys:\n  - sk-live-secret-123\n", "decode config: invalid YAML structure"},
+		{"nested-list api key never leaks", "api-keys:\n  - [sk-live-secret-123]\n", "decode config: invalid YAML structure"},
 		{"request-timeout zero rejected", "request-timeout: 0s\n" + withKey, "request-timeout: must be positive"},
 		{
 			"duplicate route-override keys",
@@ -289,7 +289,7 @@ func TestLoadRejections(t *testing.T) {
 }
 
 // TestLoadErrorsNeverLeakDecodedValues pins the security property: decode
-// and validation failures must not echo raw scalars (a bare-scalar API key)
+// and validation failures must not echo raw scalars (a nested-list API key)
 // or embedded userinfo credentials into the error the host logs.
 func TestLoadErrorsNeverLeakDecodedValues(t *testing.T) {
 	cases := []struct {
@@ -297,7 +297,7 @@ func TestLoadErrorsNeverLeakDecodedValues(t *testing.T) {
 		yaml   string
 		secret string
 	}{
-		{"bare-scalar api key", "api-keys:\n  - sk-live-supersecret-42\n", "sk-live-supersecret-42"},
+		{"nested-list api key", "api-keys:\n  - [sk-live-supersecret-42]\n", "sk-live-supersecret-42"},
 		{"duplicate api key values", "api-keys:\n  - value: sk-live-dupsecret-7\n  - value: sk-live-dupsecret-7\n", "sk-live-dupsecret-7"},
 		{"userinfo credentials", "base-url: https://admin:p4ssw0rd@/v1\n", "p4ssw0rd"},
 	}
@@ -343,5 +343,22 @@ func TestValidateURLRejectsQueryFragmentUserinfo(t *testing.T) {
 				t.Errorf("error echoes credentials: %q", err.Error())
 			}
 		})
+	}
+}
+
+func TestLoadAcceptsBareStringKeys(t *testing.T) {
+	t.Setenv("TEST_OG_KEY", "sk-from-env")
+	c, err := Load([]byte("api-keys: [\"sk-bare\", {value: sk-mapped, label: work}, \"${TEST_OG_KEY}\"]\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []APIKey{{Value: "sk-bare"}, {Value: "sk-mapped", Label: "work"}, {Value: "sk-from-env"}}
+	if len(c.APIKeys) != len(want) {
+		t.Fatalf("keys = %+v", c.APIKeys)
+	}
+	for i := range want {
+		if c.APIKeys[i] != want[i] {
+			t.Fatalf("key %d = %+v, want %+v", i, c.APIKeys[i], want[i])
+		}
 	}
 }

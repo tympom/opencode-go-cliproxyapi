@@ -41,7 +41,7 @@ plugins:
           label: "work"                # optional display name; also names the auth file
         - value: "sk-opencode-key-2"
           label: "personal"
-        - value: "${OPENCODE_GO_API_KEY}"
+        - "${OPENCODE_GO_API_KEY}"      # a bare string works too (no label)
 
       # Catalog discovery settings
       catalog:
@@ -66,7 +66,7 @@ plugins:
       allow-http: false                  # allow http:// scheme for local mock/testing (default: false)
 ```
 
-All fields are also editable through the Management Center's plugin config UI (registration publishes `ConfigFields`). A fresh store install registers without keys, so you can add `api-keys` there (Plugins → Edit config) without touching `config.yaml` by hand.
+All fields are also editable through the Management Center's plugin config UI (registration publishes `ConfigFields`). A fresh store install registers without keys, so you can add `api-keys` there (Plugins → Edit config) without touching `config.yaml` by hand, e.g. `["sk-..."]` or `[{"value": "sk-...", "label": "work"}]`.
 
 ### Notes
 
