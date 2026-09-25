@@ -637,46 +637,6 @@ func TestLifecycleUsesCPAAuthListAfterManagerRestart(t *testing.T) {
 	}
 }
 
-func TestLifecycleMigratesLegacyAuthFileNames(t *testing.T) {
-	f := &fakeCaller{responder: catalogResponder(true, testCatalogJSON)}
-	// Seed the auth store with a legacy v0.1.8-style record under the full
-	// 64-hex file name. A register must migrate it: save once under the new
-	// human-readable name, and not re-save on the next register.
-	digest := sha256.Sum256([]byte(testKey))
-	fullHash := hex.EncodeToString(digest[:])
-	f.authFiles = map[string]string{"opencode-go-key-" + fullHash + ".json": ""}
-	m := NewManager(NewHostBridge(f.call))
-	t.Cleanup(func() { _, _ = m.HandleCall("plugin.shutdown", nil) })
-	if _, err := m.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML)); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	calls := f.callsOf(pluginabi.MethodHostAuthSave)
-	if len(calls) != 1 {
-		t.Fatalf("migration auth saves = %d, want 1", len(calls))
-	}
-	var wire pluginapi.HostAuthSaveRequest
-	if err := json.Unmarshal(calls[0].payload, &wire); err != nil {
-		t.Fatal(err)
-	}
-	want := mustAuthFileName(config.APIKey{Value: testKey}, fullHash)
-	if wire.Name != want {
-		t.Fatalf("migrated record name = %q, want %q", wire.Name, want)
-	}
-	if strings.Contains(wire.Name, fullHash) {
-		t.Fatalf("migrated name exposes full digest: %q", wire.Name)
-	}
-	// Second register: new name already present, no further saves (the
-	// legacy file cannot be deleted through the host ABI and stays).
-	second := NewManager(NewHostBridge(f.call))
-	t.Cleanup(func() { _, _ = second.HandleCall("plugin.shutdown", nil) })
-	if _, err := second.HandleCall("plugin.register", lifecycleRequestBody(testValidYAML)); err != nil {
-		t.Fatalf("second register: %v", err)
-	}
-	if got := len(f.callsOf(pluginabi.MethodHostAuthSave)); got != 1 {
-		t.Fatalf("saves after migration = %d, want 1", got)
-	}
-}
-
 func TestLifecycleAuthListFailureDoesNotWrite(t *testing.T) {
 	f := &fakeCaller{responder: func(method string, _ []byte) ([]byte, error) {
 		if method == pluginabi.MethodHostAuthList {

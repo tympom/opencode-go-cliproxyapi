@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.20"
+	pluginVersion = "1.0.0"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -378,9 +378,6 @@ func (m *Manager) handleLifecycle(request []byte) ([]byte, error) {
 // fall back to the masked key suffix ("opencode-go-key-Xf9a.json"). When two
 // keys resolve to the same name, the second carries a 12-hex disambiguator
 // so same-labeled (or same-suffix) keys cannot overwrite each other.
-// Records materialized by older versions under the full 64-hex name are
-// migrated on first sight by saving under the new name; the stale file
-// cannot be deleted through the host ABI and must be removed manually once.
 func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config) error {
 	if m.bridge == nil {
 		return nil
@@ -429,8 +426,7 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 		}); err != nil {
 			return err
 		}
-		_, legacy := existing[id+".json"]
-		debugTrace("auth materialized id=%s file=%s migrated_from_legacy=%t", id, name, legacy)
+		debugTrace("auth materialized id=%s file=%s", id, name)
 	}
 	return nil
 }
