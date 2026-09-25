@@ -71,16 +71,17 @@ All fields are also editable through the Management Center's plugin config UI (r
 ### Notes
 
 - **Auth files**: each key gets a credential file named after its label (`opencode-go-work.json`); unlabeled keys fall back to a masked key suffix (`opencode-go-key-Xf9a.json`). Renaming a key's label creates a new auth file — remove the old one in Auth Files manually (the host plugin ABI has no delete callback).
-- **Quota page**: Management Center → OpenCode Go Quota. Cards are titled with each key's label; reset times render as `MM-DD HH:mm · in Xd Yh` (same formatting as CPA's native quota UI). Page load never contacts upstream; refresh each card manually or all at once with Refresh All.
-- Requires CLIProxyAPI `v7.2.138+` and a CGO-enabled build (Go 1.27.1+).
+- **Quota page**: Management Center → OpenCode Go Quota. Cards are titled with each key's label; reset times show local date/time plus a countdown, e.g. `09/23, 16:35 · in 4d 23h` (same formatting as CPA's native quota UI). Page load never contacts upstream; refresh each card manually or all at once with Refresh All.
+- Built and tested against CLIProxyAPI `v7.3.17`.
 
 ## Changes vs upstream (`massiveits/opencode-go-cliproxyapi`)
 
 - **Plugin ID renamed** `opencode-go-cliproxyapi` → `opencode-go-clpx` so this fork can coexist with the official store listing instead of colliding on the same name.
 - **Per-key labels**: `api-keys[].label` names a key's quota card and its auth file (upstream shows an opaque hash of the key).
 - **Readable auth file names**: `opencode-go-<label>.json` instead of upstream's `opencode-go-key-<64-hex>.json`; same-name keys get a 12-hex disambiguator instead of overwriting each other.
-- **Native reset-time formatting on the quota page**: `09/23, 16:35 · in 4d 23h` style (ported from CPA's Management Center), including fractional-seconds tolerance and day/hour/minute precision — upstream prints the raw `resets_at` ISO string.
-- **CI**: linux-only release builds (amd64/arm64) on latest GitHub Actions versions; `registry.json` published for the plugin store.
-- **Go toolchain**: `go 1.27.1`.
+- **Native reset-time formatting on the quota page**: `09/23, 16:35 · in 4d 23h` style (ported from CPA's Management Center) — upstream prints the raw `resets_at` ISO string.
+- **Registers without API keys**, so the config editor works right after a Store install; upstream fails registration until a key is configured.
+- **Plain-string API keys**: `api-keys` accepts `["sk-..."]` as well as `{value, label}` objects.
+- **CI**: Linux-only release builds (amd64/arm64), no test job; `registry.json` published for the plugin store.
 
 Everything else — provider behavior, protocol translation, catalog discovery, scheduling, model prefixing — is unchanged from upstream; merge `upstream/main` to pick up its fixes.
