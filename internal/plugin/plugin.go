@@ -24,12 +24,15 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "0.1.18"
+	pluginVersion = "0.1.19"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
 // validPlugin rejects empty Metadata.GitHubRepository).
 const githubRepoURL = "https://github.com/massiveits/opencode-go-cliproxyapi"
+
+// logoURL is shown by the Management Center Plugins page.
+const logoURL = "https://raw.githubusercontent.com/tympom/opencode-go-cliproxyapi/main/assets/logo.svg"
 
 // registerRefreshTimeout bounds ONLY the synchronous initial/reconfigure
 // refreshOnce so a slow catalog cannot block host startup/reconfigure for a
@@ -232,6 +235,7 @@ func registrationEnvelope() []byte {
 			Version:          pluginVersion,
 			Author:           pluginName,
 			GitHubRepository: githubRepoURL,
+			Logo:             logoURL,
 			ConfigFields:     pluginConfigFields(),
 		},
 		Capabilities: capabilities{
