@@ -1,4 +1,4 @@
-# AGENTS.md
+# opencode-go-cliproxyapi
 
 Include parent `AGENTS.md`.
 
