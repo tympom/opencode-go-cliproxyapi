@@ -53,17 +53,172 @@ type messagesRequest struct {
 // reasoning controls resolve against what the model actually supports.
 // Unknown formats are ClassUnsupported; malformed input is
 // ClassTranslation. Errors are descriptive and redacted — no silent loss.
-func BuildRequest(upstreamModel string, sourceFormat string, sourceBody []byte, ts *pluginapi.ThinkingSupport) ([]byte, *errclass.Error) {
+func BuildRequest(upstreamModel string, sourceFormat string, sourceBody []byte, ts *pluginapi.ThinkingSupport, tools ...*shared.ResponseTools) ([]byte, *errclass.Error) {
 	switch sourceFormat {
 	case "claude":
-		return shared.RewriteModelID(upstreamModel, sourceBody, "claude")
+		return passthroughClaude(upstreamModel, sourceBody)
 	case "openai":
 		return fromChatCompletions(upstreamModel, sourceBody, ts)
 	case "openai-response":
-		return fromResponses(upstreamModel, sourceBody, ts)
+		return fromResponses(upstreamModel, sourceBody, ts, shared.ResponseToolContext(tools))
 	default:
 		return nil, shared.UnsupportedFormat(sourceFormat, EndpointPath)
 	}
+}
+
+// passthroughClaude rewrites the model ID on a native Claude request,
+// folding any in-history role:"system" turns into the top-level system
+// field (Anthropic rejects system roles inside messages). Text joins with
+// blank lines; a string system stays a string, a block-array system gains
+// a text block, an absent system becomes a string. Non-text system content
+// is rejected descriptively, never dropped. Without system turns it is a
+// pure model rewrite with no other mutation.
+func passthroughClaude(upstreamModel string, sourceBody []byte) ([]byte, *errclass.Error) {
+	var req map[string]json.RawMessage
+	if err := json.Unmarshal(sourceBody, &req); err != nil {
+		return nil, errclass.Translation("malformed claude request JSON: " + err.Error())
+	}
+	if req == nil {
+		return nil, errclass.Translation("malformed request body: JSON null is not a valid request")
+	}
+	rawMsgs, ok := req["messages"]
+	if !ok || !shared.HasContent(rawMsgs) {
+		return shared.RewriteModelID(upstreamModel, sourceBody, "claude")
+	}
+	var arr []json.RawMessage
+	if err := json.Unmarshal(rawMsgs, &arr); err != nil {
+		return nil, errclass.Translation("malformed claude request JSON: " + err.Error())
+	}
+	var wire struct {
+		Role    string          `json:"role"`
+		Content json.RawMessage `json:"content"`
+	}
+	hasSystem := false
+	for _, raw := range arr {
+		// Malformed turns fail explicitly rather than passing through.
+		var w struct {
+			Role string `json:"role"`
+		}
+		if err := json.Unmarshal(raw, &w); err != nil {
+			return nil, errclass.Translation("malformed claude request JSON: " + err.Error())
+		}
+		if w.Role == "system" {
+			hasSystem = true
+			break
+		}
+	}
+	if !hasSystem {
+		return shared.RewriteModelID(upstreamModel, sourceBody, "claude")
+	}
+	var folded []string
+	kept := make([]json.RawMessage, 0, len(arr))
+	for _, raw := range arr {
+		if err := json.Unmarshal(raw, &wire); err != nil {
+			return nil, errclass.Translation("malformed claude request JSON: " + err.Error())
+		}
+		if wire.Role != "system" {
+			kept = append(kept, raw)
+			continue
+		}
+		text, eErr := systemTurnText(wire.Content)
+		if eErr != nil {
+			return nil, eErr
+		}
+		if text != "" {
+			folded = append(folded, text)
+		}
+	}
+	if len(folded) > 0 {
+		if eErr := foldSystem(req, folded); eErr != nil {
+			return nil, eErr
+		}
+	}
+	msgs, err := json.Marshal(kept)
+	if err != nil {
+		return nil, errclass.Translation("model id cannot be represented as JSON")
+	}
+	req["messages"] = msgs
+	req["model"] = json.RawMessage(`"` + upstreamModel + `"`)
+	out, err := json.Marshal(req)
+	if err != nil {
+		return nil, errclass.Translation("model id cannot be represented as JSON")
+	}
+	return out, nil
+}
+
+// systemTurnText flattens one in-history system turn's content to text.
+// String content passes through; text blocks join with blank lines;
+// thinking blocks are omitted; images and unknown types are rejected
+// descriptively rather than dropped.
+func systemTurnText(raw json.RawMessage) (string, *errclass.Error) {
+	if !shared.HasContent(raw) {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+	var elems []json.RawMessage
+	if err := json.Unmarshal(raw, &elems); err != nil {
+		return "", errclass.Translation("message content must be a string or an array of blocks")
+	}
+	var b strings.Builder
+	for _, elem := range elems {
+		var blk struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		}
+		if err := json.Unmarshal(elem, &blk); err != nil {
+			return "", errclass.Translation("malformed content block")
+		}
+		switch blk.Type {
+		case "text":
+			if b.Len() > 0 {
+				b.WriteString("\n\n")
+			}
+			b.WriteString(blk.Text)
+		case "image":
+			return "", shared.SystemImageRejected()
+		case "thinking", "redacted_thinking":
+		default:
+			return "", shared.UnsupportedPartType(blk.Type, EndpointPath)
+		}
+	}
+	return b.String(), nil
+}
+
+// foldSystem merges folded in-history system texts into the envelope's
+// system field: strings append with blank-line separators, block arrays
+// gain one text block, absent systems become a string.
+func foldSystem(req map[string]json.RawMessage, folded []string) *errclass.Error {
+	joined := strings.Join(folded, "\n\n")
+	rawSys, ok := req["system"]
+	if !ok || !shared.HasContent(rawSys) {
+		b, _ := json.Marshal(joined) // string always marshals
+		req["system"] = b
+		return nil
+	}
+	var s string
+	if err := json.Unmarshal(rawSys, &s); err == nil {
+		if s != "" {
+			joined = s + "\n\n" + joined
+		}
+		b, _ := json.Marshal(joined) // string always marshals
+		req["system"] = b
+		return nil
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(rawSys, &blocks); err != nil {
+		return errclass.Translation("malformed system field")
+	}
+	b, _ := json.Marshal(textBlock(joined)) // marshallable composed type; cannot fail
+	blocks = append(blocks, b)
+	merged, err := json.Marshal(blocks)
+	if err != nil {
+		return errclass.Translation("model id cannot be represented as JSON")
+	}
+	req["system"] = merged
+	return nil
 }
 
 // contentParts normalizes an OpenAI-style content field into Anthropic
@@ -159,9 +314,6 @@ func finalize(req *messagesRequest, system []string, effort string, ts *pluginap
 		req.Messages = []anthropicMessage{}
 	}
 	if effort != "" {
-		if eErr := thinking.ValidateEffort(effort, ts); eErr != nil {
-			return nil, eErr
-		}
 		budget, _ := thinking.BudgetFromEffort(effort, ts)
 		applyThinking(req, budget)
 	}
@@ -287,6 +439,9 @@ func fromChatCompletions(upstreamModel string, body []byte, ts *pluginapi.Thinki
 	req.Messages = b.msgs
 
 	for _, t := range src.Tools {
+		if t.Type == "namespace" {
+			continue
+		}
 		if eErr := shared.FunctionTool(t.Type, EndpointPath); eErr != nil {
 			return nil, eErr
 		}
@@ -310,7 +465,7 @@ func fromChatCompletions(upstreamModel string, body []byte, ts *pluginapi.Thinki
 // map like Chat Completions messages, function_call/function_call_output
 // items map to tool_use/tool_result blocks, reasoning summaries are kept
 // as best-effort thinking blocks (signatures unavailable upstream).
-func fromResponses(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupport) ([]byte, *errclass.Error) {
+func fromResponses(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupport, tools *shared.ResponseTools) ([]byte, *errclass.Error) {
 	var src shared.ResponsesRequest
 	if err := json.Unmarshal(body, &src); err != nil {
 		return nil, errclass.Translation("malformed openai-response request JSON: " + err.Error())
@@ -338,7 +493,7 @@ func fromResponses(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupp
 	}
 
 	var b msgBuilder
-	items, eErr := src.DecodeInputItems()
+	items, eErr := tools.Normalize(&src, EndpointPath)
 	if eErr != nil {
 		return nil, eErr
 	}
@@ -377,9 +532,26 @@ func fromResponses(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupp
 			b.add("assistant", "assistant", anthropicBlock{
 				"type": "tool_use", "id": item.CallID, "name": item.Name, "input": input,
 			})
-		case "function_call_output":
+		case "custom_tool_call":
+			args := item.Arguments
+			if args == "" && item.Input != "" {
+				args = item.Input
+			}
+			input, eErr := shared.DecodeArgs(args)
+			if eErr != nil {
+				// Freeform custom tool input is not JSON: wrap verbatim.
+				input = map[string]any{"input": args}
+			}
+			b.add("assistant", "assistant", anthropicBlock{
+				"type": "tool_use", "id": item.CallID, "name": item.Name, "input": input,
+			})
+		case "function_call_output", "custom_tool_call_output":
+			text, eErr := shared.RespOutputText(item.Output, "tool messages carry text only")
+			if eErr != nil {
+				return nil, eErr
+			}
 			b.add("user:tool", "user", anthropicBlock{
-				"type": "tool_result", "tool_use_id": item.CallID, "content": item.Output,
+				"type": "tool_result", "tool_use_id": item.CallID, "content": text,
 			})
 		case "reasoning":
 			// Best-effort: keep summary text as a thinking block;

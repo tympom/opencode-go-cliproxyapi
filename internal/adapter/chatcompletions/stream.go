@@ -42,6 +42,7 @@ type StreamConverter struct {
 	terminalSent bool            // claudeTerminal already emitted message_delta (Flush must still close with message_stop)
 	flushed      bool            // Flush already ran (one-shot guard)
 	respText     strings.Builder // openai-response accumulated output_text
+	respTools    *shared.ResponseTools
 }
 
 // streamTool accumulates one upstream tool_calls index; args collects
@@ -53,16 +54,21 @@ type streamTool struct {
 	name       string
 	args       strings.Builder
 	stopped    bool // content_block_stop emitted
+	customEmitted int // custom_tool_call_input bytes already emitted as deltas
 }
 
 // NewStreamConverter returns a converter translating Chat Completions
 // SSE into sourceFormat's stream shape.
-func NewStreamConverter(sourceFormat string) *StreamConverter {
-	return &StreamConverter{
+func NewStreamConverter(sourceFormat string, tools ...*shared.ResponseTools) *StreamConverter {
+	sc := &StreamConverter{
 		sourceFormat: sourceFormat,
 		msgIndex:     -1,
 		tools:        map[int64]*streamTool{},
 	}
+	if len(tools) > 0 && tools[0] != nil {
+		sc.respTools = tools[0]
+	}
+	return sc
 }
 
 // Feed consumes one upstream chunk (any split of the byte stream),
@@ -473,7 +479,17 @@ func (sc *StreamConverter) responsesLine(line string) ([][]byte, *errclass.Error
 		}
 		if tc.Function.Arguments != "" {
 			t.args.WriteString(tc.Function.Arguments)
-			events = append(events, sc.responsesEm().ArgsDelta(t.id, t.blockIndex, tc.Function.Arguments))
+			if sc.respTools.IsCustom(t.name) {
+				// Custom tool arguments stream as wrapped JSON
+				// ({"input":"..."}) that only unwraps once complete:
+				// only the newly-unwrapped input tail is emitted, so
+				// raw wrapper tokens never leak into client deltas.
+				if tail := shared.CustomInputTail(t.args.String(), &t.customEmitted); tail != "" {
+					events = append(events, sc.responsesEm().InputDelta(t.id, t.blockIndex, tail))
+				}
+			} else {
+				events = append(events, sc.responsesEm().ArgsDelta(t.id, t.blockIndex, tc.Function.Arguments))
+			}
 		}
 	}
 	if choice.FinishReason != "" && !sc.finished {
@@ -487,7 +503,7 @@ func (sc *StreamConverter) responsesLine(line string) ([][]byte, *errclass.Error
 // upstream chunk identity so this route's frames cannot diverge from the
 // sibling Messages-route synthesizer (FR-006).
 func (sc *StreamConverter) responsesEm() shared.ResponsesEventEmitter {
-	return shared.ResponsesEventEmitter{ID: sc.id, Model: sc.model}
+	return shared.ResponsesEventEmitter{ID: sc.id, Model: sc.model, Tools: sc.respTools}
 }
 
 // responsesTerminal renders the held response.completed exactly once,
@@ -509,7 +525,7 @@ func (sc *StreamConverter) responsesTerminal() [][]byte {
 	// tools-first announcements), never displacing already-announced
 	// function_call items; this mirrors the Messages-route invariant that
 	// terminal output order equals announcement order (W4 pin).
-	oa := shared.NewOutputAssembler(sc.id)
+	oa := shared.NewOutputAssembler(sc.id, sc.respTools)
 	reserved := false
 	for _, idx := range sc.toolOrder {
 		t := sc.tools[idx]
@@ -539,5 +555,27 @@ func (sc *StreamConverter) responsesTerminal() [][]byte {
 		}
 	}
 	usage := shared.NewResponsesUsageFrom(input, outputTokens, details)
-	return [][]byte{sc.responsesEm().Completed(status, usage, oa.Render())}
+	items := oa.Render()
+	em := sc.responsesEm()
+	var events [][]byte
+	for idx, item := range items {
+		v, ok := item.(shared.RespItem)
+		if !ok {
+			continue
+		}
+		switch v.Type {
+		case "message":
+			text := sc.respText.String()
+			events = append(events, em.TextDone(v.ID, idx, text))
+			events = append(events, em.ContentPartDone(v.ID, idx, text))
+			events = append(events, em.ItemDone(idx, v))
+		case "function_call":
+			events = append(events, em.ArgsDone(v.CallID, idx, v.Name, v.Arguments))
+			events = append(events, em.ItemDone(idx, v))
+		case "custom_tool_call":
+			events = append(events, em.InputDone(v.CallID, idx, v.Input))
+			events = append(events, em.ItemDone(idx, v))
+		}
+	}
+	return append(events, em.Completed(status, usage, items))
 }

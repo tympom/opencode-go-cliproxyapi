@@ -305,9 +305,9 @@ func TestRedactedSnippet(t *testing.T) {
 	if got := RedactedSnippet("Bearer sk-secret-123 rest"); got != "Bearer [redacted] rest" {
 		t.Fatalf("redaction = %q", got)
 	}
-	long := strings.Repeat("a", 100)
+	long := strings.Repeat("a", 300)
 	got := RedactedSnippet(long)
-	if got != long[:80]+"..." {
+	if got != long[:256]+"..." {
 		t.Fatalf("truncation = %d chars, tail %q", len(got), got[len(got)-4:])
 	}
 	short := "plain text"
@@ -327,9 +327,9 @@ func TestUpstreamStatusError(t *testing.T) {
 
 	// Oversized bodies are truncated before snippet extraction, so the
 	// message stays snippet-sized regardless of body size.
-	for _, size := range []int{100, 4096, 4097, 1 << 20} {
+	for _, size := range []int{300, 4096, 4097, 1 << 20} {
 		e = UpstreamStatusError(500, []byte(strings.Repeat("x", size)))
-		if len(e.Message) > 83 || !strings.HasSuffix(e.Message, "...") {
+		if len(e.Message) > 259 || !strings.HasSuffix(e.Message, "...") {
 			t.Fatalf("size %d not bounded: %d chars", size, len(e.Message))
 		}
 	}
@@ -337,6 +337,27 @@ func TestUpstreamStatusError(t *testing.T) {
 	// Short bodies pass through as the whole redacted snippet.
 	if e := UpstreamStatusError(503, []byte("down")); e.Message != "down" {
 		t.Fatalf("short body = %q", e.Message)
+	}
+
+	// JSON error bodies extract clean human-readable error messages.
+	cases := []struct {
+		body []byte
+		want string
+	}{
+		{[]byte(`{"error":{"message":"Invalid temperature: 999.0"}}`), "Invalid temperature: 999.0"},
+		{[]byte(`{"error":"model not found"}`), "model not found"},
+		{[]byte(`{"message":"unauthorized access"}`), "unauthorized access"},
+		{[]byte(`{"detail":"rate limit exceeded"}`), "rate limit exceeded"},
+		{[]byte(`{"error":{"message":"Bearer sk-secret-123 failed"}}`), "Bearer [redacted] failed"},
+		{[]byte(`{"error":{"type":"invalid_request"}}`), `{"error":{"type":"invalid_request"}}`},
+		{[]byte(`{"other":123}`), `{"other":123}`},
+		{[]byte(``), ""},
+	}
+	for _, tc := range cases {
+		e := UpstreamStatusError(400, tc.body)
+		if e.Message != tc.want {
+			t.Errorf("UpstreamStatusError(400, %s) = %q, want %q", tc.body, e.Message, tc.want)
+		}
 	}
 }
 
@@ -452,6 +473,41 @@ func TestToolResultText(t *testing.T) {
 		t.Errorf("non-text block err = %+v", eErr)
 	}
 	if _, eErr := ToolResultText(json.RawMessage(`42`), "n"); eErr == nil || eErr.Class != errclass.ClassTranslation {
+		t.Errorf("malformed content err = %+v", eErr)
+	}
+}
+
+func TestRespItemOutputArray(t *testing.T) {
+	data := []byte(`{"type":"function_call_output","call_id":"c1","output":[{"type":"input_text","text":"file contents"}]}`)
+	var item RespItem
+	if err := json.Unmarshal(data, &item); err != nil {
+		t.Fatalf("unmarshal RespItem: %v", err)
+	}
+	text, eErr := RespOutputText(item.Output, "tool messages carry text only")
+	if eErr != nil || text != "file contents" {
+		t.Fatalf("RespOutputText: got %q, %v", text, eErr)
+	}
+}
+
+func TestRespOutputText(t *testing.T) {
+	for _, raw := range []json.RawMessage{nil, json.RawMessage(`null`)} {
+		if got, _ := RespOutputText(raw, "n"); got != "" {
+			t.Errorf("absent content = %q", got)
+		}
+	}
+	if got, _ := RespOutputText(json.RawMessage(`"plain"`), "n"); got != "plain" {
+		t.Errorf("string content = %q", got)
+	}
+	got, eErr := RespOutputText(json.RawMessage(`[{"type":"input_text","text":"a"},{"type":"output_text","text":"b"},{"type":"text","text":"c"}]`), "n")
+	if eErr != nil || got != "abc" {
+		t.Errorf("part array = %q, %v; want abc, nil", got, eErr)
+	}
+	if _, eErr := RespOutputText(json.RawMessage(`[{"type":"image","source":{}}]`), "tool messages carry text only"); eErr == nil ||
+		eErr.Class != errclass.ClassTranslation ||
+		eErr.Message != `unsupported tool output part type "image"; tool messages carry text only` {
+		t.Errorf("non-text part err = %+v", eErr)
+	}
+	if _, eErr := RespOutputText(json.RawMessage(`42`), "n"); eErr == nil || eErr.Class != errclass.ClassTranslation {
 		t.Errorf("malformed content err = %+v", eErr)
 	}
 }
@@ -935,6 +991,53 @@ func TestResponsesEventEmitter(t *testing.T) {
 	u := resp["usage"].(map[string]any)
 	if u["input_tokens"] != float64(2) || u["output_tokens"] != float64(3) || u["total_tokens"] != float64(5) {
 		t.Fatalf("completed usage = %v", u)
+	}
+}
+
+// FR-006: item lifecycle completion events render before
+// response.completed — TextDone/ContentPartDone close the message text,
+// ArgsDone closes the function call arguments (name only when non-empty),
+// and ItemDone closes each rendered output item.
+func TestResponsesEventEmitterDoneEvents(t *testing.T) {
+	e := ResponsesEventEmitter{ID: "r1", Model: "m1"}
+
+	td := ssePayload(t, e.TextDone("msg_1", 0, "hej"))
+	if td["type"] != "response.output_text.done" || td["item_id"] != "msg_1" ||
+		td["output_index"] != float64(0) || td["content_index"] != float64(0) || td["text"] != "hej" {
+		t.Fatalf("text done = %v", td)
+	}
+
+	cp := ssePayload(t, e.ContentPartDone("msg_1", 0, "hej"))
+	if cp["type"] != "response.content_part.done" || cp["item_id"] != "msg_1" ||
+		cp["output_index"] != float64(0) || cp["content_index"] != float64(0) {
+		t.Fatalf("content part done = %v", cp)
+	}
+	part, ok := cp["part"].(map[string]any)
+	if !ok || part["type"] != "output_text" || part["text"] != "hej" {
+		t.Fatalf("content part = %v", cp["part"])
+	}
+
+	ad := ssePayload(t, e.ArgsDone("c1", 1, "lookup", `{"q":1}`))
+	if ad["type"] != "response.function_call_arguments.done" || ad["item_id"] != "c1" ||
+		ad["output_index"] != float64(1) || ad["name"] != "lookup" || ad["arguments"] != `{"q":1}` {
+		t.Fatalf("args done = %v", ad)
+	}
+	// Empty name omits the member entirely.
+	ad = ssePayload(t, e.ArgsDone("c1", 1, "", `{}`))
+	if _, ok := ad["name"]; ok {
+		t.Fatalf("empty name must be omitted: %v", ad)
+	}
+	if ad["arguments"] != `{}` {
+		t.Fatalf("args done = %v", ad)
+	}
+
+	item := map[string]any{"type": "message", "id": "msg_1"}
+	id := ssePayload(t, e.ItemDone(0, item))
+	if id["type"] != "response.output_item.done" || id["output_index"] != float64(0) {
+		t.Fatalf("item done = %v", id)
+	}
+	if !reflect.DeepEqual(id["item"], map[string]any{"type": "message", "id": "msg_1"}) {
+		t.Fatalf("item done item = %v", id["item"])
 	}
 }
 

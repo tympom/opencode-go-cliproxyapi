@@ -84,4 +84,4 @@ All fields are also editable through the Management Center's plugin config UI (r
 - **Plain-string API keys**: `api-keys` accepts `["sk-..."]` as well as `{value, label}` objects.
 - **CI**: Linux-only release builds (amd64/arm64), no test job; `registry.json` published for the plugin store.
 
-Everything else (provider behavior, protocol translation, catalog discovery, scheduling, model prefixing) is unchanged from upstream; merge `upstream/main` to pick up its fixes.
+Everything else (provider behavior, protocol translation, catalog discovery, scheduling, model prefixing) is unchanged from upstream (merged through upstream `v0.1.10`, incl. its Codex CLI support); merge `upstream/main` to pick up its fixes.

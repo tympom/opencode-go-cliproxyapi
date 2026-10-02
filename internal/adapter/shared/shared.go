@@ -449,6 +449,37 @@ func ToolResultText(raw json.RawMessage, targetNoun string) (string, *errclass.E
 	return b.String(), nil
 }
 
+// RespOutputText flattens Responses function_call_output output content (JSON
+// string or content part array) into one string for target protocol tool results.
+// It accepts part types "input_text" and "text", and returns a translation error
+// naming targetNoun on unsupported block types.
+func RespOutputText(raw json.RawMessage, targetNoun string) (string, *errclass.Error) {
+	if !HasContent(raw) {
+		return "", nil
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s, nil
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &parts); err != nil {
+		return "", errclass.Translation("tool output must be a string or an array of content parts")
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		if p.Type != "input_text" && p.Type != "output_text" && p.Type != "text" {
+			return "", errclass.Translation(fmt.Sprintf(
+				"unsupported tool output part type %q; %s", p.Type, targetNoun))
+		}
+		b.WriteString(p.Text)
+	}
+	return b.String(), nil
+}
+
+
 // ClaudeImageURL converts an Anthropic image block source into an image
 // URL for OpenAI-style targets, encoding base64 sources as data URLs
 // (FR-005 multimodal preservation). Strict validation shared by every
@@ -629,6 +660,7 @@ func (e ClaudeEventEmitter) MessageStop() []byte {
 type ResponsesEventEmitter struct {
 	ID    string // response identity carried by every event
 	Model string // model rendered on the terminal completed payload
+	Tools *ResponseTools
 }
 
 // Created renders the leading response.created announcement.
@@ -645,6 +677,20 @@ func (e ResponsesEventEmitter) Created() []byte {
 // the block-type-specific fields (message id/role/content, or function_call
 // call_id/name/arguments per the canonical call_id-only shape).
 func (e ResponsesEventEmitter) ItemAdded(outputIndex int, item map[string]any) []byte {
+	if item["type"] == "function_call" {
+		if name, ok := item["name"].(string); ok {
+			id := e.Tools.Identity(name)
+			if id.isCustom {
+				item["type"] = "custom_tool_call"
+				item["input"] = ""
+				delete(item, "arguments")
+			}
+			item["name"] = id.name
+			if id.namespace != "" {
+				item["namespace"] = id.namespace
+			}
+		}
+	}
 	return SSEEvent("response.output_item.added", map[string]any{
 		"type": "response.output_item.added", "output_index": outputIndex, "item": item,
 	})
@@ -666,6 +712,82 @@ func (e ResponsesEventEmitter) ArgsDelta(itemID string, outputIndex int, delta s
 	})
 }
 
+// InputDelta streams one partial custom_tool_call_input delta referencing
+// the announced custom_tool_call item by item_id and output_index.
+func (e ResponsesEventEmitter) InputDelta(itemID string, outputIndex int, delta string) []byte {
+	return SSEEvent("response.custom_tool_call_input.delta", map[string]any{
+		"type": "response.custom_tool_call_input.delta", "item_id": itemID, "output_index": outputIndex, "delta": delta,
+	})
+}
+
+// InputDone renders the custom_tool_call_input completion for the
+// announced custom_tool_call item, emitted before response.completed.
+func (e ResponsesEventEmitter) InputDone(itemID string, outputIndex int, input string) []byte {
+	return SSEEvent("response.custom_tool_call_input.done", map[string]any{
+		"type": "response.custom_tool_call_input.done", "item_id": itemID, "output_index": outputIndex, "input": input,
+	})
+}
+
+// CustomInputTail derives the newly-available custom tool input from the
+// accumulated wrapped arguments: nothing is reportable until the
+// accumulation unwraps past its JSON envelope, at which point only the
+// tail beyond already-reported bytes returns. Callers advance *emitted
+// past the returned tail, so raw {"input":" wrapper tokens never reach
+// client input deltas while complete inputs still stream incrementally.
+func CustomInputTail(accumulated string, emitted *int) string {
+	unwrapped := UnwrapCustomToolInput(accumulated)
+	if unwrapped == accumulated {
+		return ""
+	}
+	if *emitted >= len(unwrapped) {
+		return ""
+	}
+	tail := unwrapped[*emitted:]
+	*emitted = len(unwrapped)
+	return tail
+}
+
+// TextDone renders the output_text completion for the announced message
+// item, emitted before response.completed.
+func (e ResponsesEventEmitter) TextDone(itemID string, outputIndex int, text string) []byte {
+	return SSEEvent("response.output_text.done", map[string]any{
+		"type": "response.output_text.done", "item_id": itemID, "output_index": outputIndex, "content_index": 0, "text": text,
+	})
+}
+
+// ContentPartDone renders the content_part completion for the announced
+// message item, emitted before response.completed.
+func (e ResponsesEventEmitter) ContentPartDone(itemID string, outputIndex int, text string) []byte {
+	return SSEEvent("response.content_part.done", map[string]any{
+		"type": "response.content_part.done", "item_id": itemID, "output_index": outputIndex, "content_index": 0,
+		"part": map[string]any{"type": "output_text", "text": text},
+	})
+}
+
+// ArgsDone renders the function_call_arguments completion for the
+// announced function_call item, emitted before response.completed; name
+// is included only when non-empty.
+func (e ResponsesEventEmitter) ArgsDone(itemID string, outputIndex int, name, args string) []byte {
+	if name != "" {
+		name = e.Tools.Identity(name).name
+	}
+	payload := map[string]any{
+		"type": "response.function_call_arguments.done", "item_id": itemID, "output_index": outputIndex, "arguments": args,
+	}
+	if name != "" {
+		payload["name"] = name
+	}
+	return SSEEvent("response.function_call_arguments.done", payload)
+}
+
+// ItemDone renders the output_item completion for one rendered output
+// item, emitted before response.completed.
+func (e ResponsesEventEmitter) ItemDone(outputIndex int, item any) []byte {
+	return SSEEvent("response.output_item.done", map[string]any{
+		"type": "response.output_item.done", "output_index": outputIndex, "item": item,
+	})
+}
+
 // Completed renders the terminal response.completed event: status from the
 // route's status mapping, usage always attached (F-R6), and output items
 // rendered by the caller through OutputAssembler.
@@ -683,27 +805,64 @@ func (e ResponsesEventEmitter) Completed(status string, usage ResponsesUsage, ou
 // messages — never an upstream body echo (FR-011).
 func RedactedSnippet(s string) string {
 	s = errclass.Redact(s)
-	if len(s) > 80 {
-		return s[:80] + "..."
+	if len(s) > 256 {
+		return s[:256] + "..."
 	}
 	return s
 }
 
 // snippetBound bounds redaction work: only the head of an oversized error
-// body can reach the 80-char snippet, so every upstream >=400 site
+// body can reach the 256-char snippet, so every upstream >=400 site
 // truncates to this size before scanning (FR-011).
 const snippetBound = 4096
 
+// extractErrorMessage attempts to extract a clean, human-readable error
+// message from upstream JSON error bodies (e.g. OpenAI or Anthropic format).
+func extractErrorMessage(body []byte) string {
+	if len(body) == 0 {
+		return ""
+	}
+	var probe struct {
+		Error   any    `json:"error"`
+		Message string `json:"message"`
+		Detail  string `json:"detail"`
+	}
+	if err := json.Unmarshal(body, &probe); err != nil {
+		return ""
+	}
+	switch v := probe.Error.(type) {
+	case string:
+		if v != "" {
+			return strings.TrimSpace(v)
+		}
+	case map[string]any:
+		if m, ok := v["message"].(string); ok && m != "" {
+			return strings.TrimSpace(m)
+		}
+	}
+	if probe.Message != "" {
+		return strings.TrimSpace(probe.Message)
+	}
+	if probe.Detail != "" {
+		return strings.TrimSpace(probe.Detail)
+	}
+	return ""
+}
+
 // UpstreamStatusError classifies an upstream >=400 response body into one
 // kernel used by every adapter and the executor: the body is truncated to
-// its head before redacted-snippet extraction, then classified per §7 via
-// errclass.FromStatus. One kernel keeps bounding and redaction from
-// diverging across call sites.
+// its head, decoded for human-readable error messages if JSON, or fallen
+// back to a redacted snippet, then classified per §7 via errclass.FromStatus.
+// One kernel keeps bounding and redaction from diverging across call sites.
 func UpstreamStatusError(status int, body []byte) *errclass.Error {
 	if len(body) > snippetBound {
 		body = body[:snippetBound]
 	}
-	return errclass.FromStatus(status, RedactedSnippet(string(body)))
+	msg := extractErrorMessage(body)
+	if msg == "" {
+		msg = string(body)
+	}
+	return errclass.FromStatus(status, RedactedSnippet(msg))
 }
 
 // ResponsesUsage is the token-usage block of synthesized Responses
@@ -871,10 +1030,11 @@ type ResponsesResult struct {
 
 // RespTool is one Responses function tool.
 type RespTool struct {
-	Type        string          `json:"type"` // always "function"
+	Type        string          `json:"type"` // "function" or "namespace"
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	Parameters  json.RawMessage `json:"parameters,omitempty"`
+	Tools       []RespTool      `json:"tools,omitempty"`
 }
 
 // ResponsesRequest decodes an inbound OpenAI Responses request body
@@ -951,11 +1111,14 @@ type RespItem struct {
 	Content   json.RawMessage `json:"content,omitempty"`
 	CallID    string          `json:"call_id,omitempty"`
 	Name      string          `json:"name,omitempty"`
+	Namespace string          `json:"namespace,omitempty"`
 	Arguments string          `json:"arguments,omitempty"`
-	Output    string          `json:"output,omitempty"`
+	Input     string          `json:"input,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
 	Summary   []struct {
 		Text string `json:"text"`
 	} `json:"summary,omitempty"`
+	Tools     []RespTool      `json:"tools,omitempty"`
 }
 
 // CCFunction is one Chat Completions tool function definition (decode and
@@ -1412,12 +1575,17 @@ type OutputAssembler struct {
 	items     []any           // rendered items in insertion order
 	textSlot  int             // reserved message position, -1 until reserved
 	text      strings.Builder // aggregated message text
+	tools     *ResponseTools  // wire-to-original tool identities for restoration
 }
 
 // NewOutputAssembler binds an assembler to the response identity the
 // synthesized message item carries.
-func NewOutputAssembler(messageID string) *OutputAssembler {
-	return &OutputAssembler{messageID: messageID, textSlot: -1, items: make([]any, 0)}
+func NewOutputAssembler(messageID string, tools ...*ResponseTools) *OutputAssembler {
+	a := &OutputAssembler{messageID: messageID, textSlot: -1, items: make([]any, 0)}
+	if len(tools) > 0 && tools[0] != nil {
+		a.tools = tools[0]
+	}
+	return a
 }
 
 // ReserveTextSlot pins the message item's position at the current end of
@@ -1438,10 +1606,18 @@ func (a *OutputAssembler) AddText(fragment string) {
 
 // AppendFunctionCall adds one function_call item in arrival order;
 // arguments pass through verbatim — callers apply the absent-arguments
-// policy themselves.
+// policy themselves. Tools originally declared as type "custom" restore
+// as custom_tool_call items with unwrapped input.
 func (a *OutputAssembler) AppendFunctionCall(callID, name, args string) {
+	id := a.tools.Identity(name)
+	if id.isCustom {
+		a.items = append(a.items, RespItem{
+			Type: "custom_tool_call", CallID: callID, Name: id.name, Namespace: id.namespace, Input: UnwrapCustomToolInput(args),
+		})
+		return
+	}
 	a.items = append(a.items, RespItem{
-		Type: "function_call", CallID: callID, Name: name, Arguments: args,
+		Type: "function_call", CallID: callID, Name: id.name, Namespace: id.namespace, Arguments: args,
 	})
 }
 

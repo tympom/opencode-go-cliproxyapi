@@ -35,14 +35,14 @@ func AuthHeaders(key string) http.Header {
 // degraded (FR-005). Unknown formats are ClassUnsupported; malformed
 // input is ClassTranslation. Errors are descriptive and redacted — no
 // silent loss of tools or reasoning controls.
-func BuildRequest(upstreamModel, sourceFormat string, sourceBody []byte, ts *pluginapi.ThinkingSupport) ([]byte, *errclass.Error) {
+func BuildRequest(upstreamModel, sourceFormat string, sourceBody []byte, ts *pluginapi.ThinkingSupport, tools ...*shared.ResponseTools) ([]byte, *errclass.Error) {
 	switch sourceFormat {
 	case "openai":
 		return buildOpenAIRequest(upstreamModel, sourceBody)
 	case "claude":
 		return claudeToChat(upstreamModel, sourceBody, ts)
 	case "openai-response":
-		return responsesToChat(upstreamModel, sourceBody, ts)
+		return responsesToChat(upstreamModel, sourceBody, ts, shared.ResponseToolContext(tools))
 	default:
 		return nil, shared.UnsupportedFormat(sourceFormat, EndpointPath)
 	}
@@ -206,6 +206,23 @@ func claudeToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSuppo
 			if msg != nil {
 				out.Messages = append(out.Messages, *msg)
 			}
+		case "system":
+			var sb strings.Builder
+			sb.WriteString(m.Content)
+			for i := range m.Blocks {
+				blk := &m.Blocks[i]
+				switch blk.Kind {
+				case "text":
+					sb.WriteString(blk.Text)
+				case "image":
+					return nil, shared.SystemImageRejected()
+				default:
+					return nil, shared.UnsupportedPartType(blk.Kind, EndpointPath)
+				}
+			}
+			if sb.Len() > 0 {
+				out.Messages = append(out.Messages, ccMessage{Role: "system", Content: sb.String()})
+			}
 		default:
 			return nil, shared.ValidateRole(m.Role, EndpointPath)
 		}
@@ -325,7 +342,7 @@ func claudeAssistantMessage(m *shared.ClaudeMessageRecord) (*ccMessage, *errclas
 // same field), and max_output_tokens maps to max_tokens. Historical
 // reasoning items are omitted (no CC equivalent; FR-005 explicit omission
 // policy).
-func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupport) ([]byte, *errclass.Error) {
+func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSupport, tools *shared.ResponseTools) ([]byte, *errclass.Error) {
 	var src shared.ResponsesRequest
 	if err := json.Unmarshal(body, &src); err != nil {
 		return nil, errclass.Translation("malformed openai-response request JSON: " + err.Error())
@@ -341,17 +358,8 @@ func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSu
 		out.MaxTokens = src.MaxOutputTokens
 	}
 	if src.Reasoning != nil && src.Reasoning.Effort != "" {
-		if eErr := thinking.ValidateEffort(src.Reasoning.Effort, ts); eErr != nil {
-			return nil, eErr
-		}
 		out.ReasoningEffort = strings.ToLower(strings.TrimSpace(src.Reasoning.Effort))
 	}
-	kind, tcName, eErr := shared.DecodeToolChoice(src.ToolChoice)
-	if eErr != nil {
-		return nil, eErr
-	}
-	applyToolChoiceCC(out, kind, tcName)
-
 	addSystem := func(text string) {
 		if text != "" {
 			out.Messages = append(out.Messages, ccMessage{Role: "system", Content: text})
@@ -363,10 +371,15 @@ func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSu
 	}
 	addSystem(instr)
 
-	items, eErr := src.DecodeInputItems()
+	items, eErr := tools.Normalize(&src, EndpointPath)
 	if eErr != nil {
 		return nil, eErr
 	}
+	kind, tcName, eErr := shared.DecodeToolChoice(src.ToolChoice)
+	if eErr != nil {
+		return nil, eErr
+	}
+	applyToolChoiceCC(out, kind, tcName)
 	for _, item := range items {
 		switch item.Type {
 		case "message":
@@ -399,10 +412,14 @@ func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSu
 			default:
 				return nil, shared.ValidateRole(item.Role, EndpointPath)
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
+			args := item.Arguments
+			if args == "" && item.Input != "" {
+				args = item.Input
+			}
 			tc := shared.CCToolCall{ID: item.CallID, Type: "function"}
 			tc.Function.Name = item.Name
-			tc.Function.Arguments = shared.DefaultArgs(item.Arguments)
+			tc.Function.Arguments = shared.DefaultArgs(args)
 			// Merge consecutive function_call items into one
 			// assistant message so multi-call turns round-trip.
 			if n := len(out.Messages); n > 0 {
@@ -415,9 +432,13 @@ func responsesToChat(upstreamModel string, body []byte, ts *pluginapi.ThinkingSu
 			out.Messages = append(out.Messages, ccMessage{
 				Role: "assistant", ToolCalls: []shared.CCToolCall{tc},
 			})
-		case "function_call_output":
+		case "function_call_output", "custom_tool_call_output":
+			text, eErr := shared.RespOutputText(item.Output, "tool messages carry text only")
+			if eErr != nil {
+				return nil, eErr
+			}
 			out.Messages = append(out.Messages, ccMessage{
-				Role: "tool", Content: item.Output, ToolCallID: item.CallID,
+				Role: "tool", Content: text, ToolCallID: item.CallID,
 			})
 		case "reasoning":
 			// omitted: no Chat Completions equivalent (FR-005 policy)

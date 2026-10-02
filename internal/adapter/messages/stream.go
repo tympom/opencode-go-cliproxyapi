@@ -35,6 +35,7 @@ type StreamConverter struct {
 	outCount         int  // responses: next compacted output position; thinking blocks consume none (FR-005 omission)
 	emitted          bool // any client event emitted (Flush eligibility)
 	flushed          bool // one-shot guard for Flush
+	respTools        *shared.ResponseTools
 }
 
 // blockState tracks one open upstream content block by index.
@@ -47,19 +48,24 @@ type blockState struct {
 	emitted bool            // openai: id/name attached to the first arguments fragment
 	text    strings.Builder // accumulated text_delta content (responses target)
 	args    strings.Builder // accumulated input_json_delta content (responses target)
+	customEmitted int // custom_tool_call_input bytes already emitted as deltas
 }
 
 // NewStreamConverter prepares stream conversion for sourceFormat
 // ("openai" Chat Completions chunks, "openai-response" Responses events,
 // "claude" verbatim passthrough).
-func NewStreamConverter(sourceFormat string) *StreamConverter {
-	return &StreamConverter{
+func NewStreamConverter(sourceFormat string, tools ...*shared.ResponseTools) *StreamConverter {
+	sc := &StreamConverter{
 		framer:       shared.NewSSEFramer(sourceFormat == "claude"),
 		sourceFormat: sourceFormat,
 		created:      time.Now().Unix(),
 		blocks:       map[int]*blockState{},
 		msgIdx:       -1,
 	}
+	if len(tools) > 0 && tools[0] != nil {
+		sc.respTools = tools[0]
+	}
+	return sc
 }
 
 // Feed consumes one network chunk and returns fully framed client events,
@@ -301,7 +307,16 @@ func (sc *StreamConverter) dispatchResponses(etype string, ev *sseEvent, events 
 				return false, errclass.Translation("tool arguments fragment without a tool_use block start")
 			}
 			bs.args.WriteString(ev.Delta.PartialJSON)
-			*events = append(*events, sc.responsesEm().ArgsDelta(bs.id, bs.outIdx, ev.Delta.PartialJSON))
+			if sc.respTools.IsCustom(bs.name) {
+				// Same wrapped-JSON accumulation as the Chat
+				// Completions route: raw fragments never reach the
+				// client, only newly-unwrapped input tails.
+				if tail := shared.CustomInputTail(bs.args.String(), &bs.customEmitted); tail != "" {
+					*events = append(*events, sc.responsesEm().InputDelta(bs.id, bs.outIdx, tail))
+				}
+			} else {
+				*events = append(*events, sc.responsesEm().ArgsDelta(bs.id, bs.outIdx, ev.Delta.PartialJSON))
+			}
 		case "thinking_delta":
 			// FR-005 explicit omission policy: no standard Responses
 			// reasoning-delta event; dropped.
@@ -314,7 +329,7 @@ func (sc *StreamConverter) dispatchResponses(etype string, ev *sseEvent, events 
 		sc.captureCache(ev.Usage)
 		sc.stopReason = ev.Delta.StopReason
 	case "message_stop":
-		*events = append(*events, sc.responsesCompleted())
+		*events = append(*events, sc.responsesCompleted()...)
 		return true, nil
 	case "error":
 		return false, sseError(ev.Error)
@@ -323,25 +338,61 @@ func (sc *StreamConverter) dispatchResponses(etype string, ev *sseEvent, events 
 	return false, nil
 }
 
-// responsesCompleted builds the terminal response.completed event: shape
-// parity with the non-stream claudeToResponses converter — status comes
-// from the Responses vocabulary {completed, incomplete} via the observed
+// responsesCompleted builds the terminal event sequence: item lifecycle
+// completion events for every rendered output item followed by
+// response.completed — shape parity with the non-stream
+// claudeToResponses converter for the terminal payload, with status from
+// the Responses vocabulary {completed, incomplete} via the observed
 // stop_reason (max_tokens truncation → incomplete); tool calls are
 // represented by their function_call output items and never override the
 // status (FR-006). Shared by message_stop and Flush so an early upstream
 // close cannot diverge from the normal-path shape.
-func (sc *StreamConverter) responsesCompleted() []byte {
+func (sc *StreamConverter) responsesCompleted() [][]byte {
 	status := shared.ResponseStatusFromClaudeStop(sc.stopReason)
 	usage := shared.NewResponsesUsageFrom(sc.promptTokens+valueOrZero(sc.cacheRead)+valueOrZero(sc.cacheCreation), sc.completionTokens,
 		shared.UsageDetails{CachedTokens: sc.cacheRead, CacheWriteTokens: sc.cacheCreation})
-	return sc.responsesEm().Completed(status, usage, sc.outputItems())
+	items := sc.outputItems()
+	em := sc.responsesEm()
+	out := make([][]byte, 0, len(items)*2+1)
+	for idx, item := range items {
+		v, ok := item.(shared.RespItem)
+		if !ok {
+			continue
+		}
+		switch v.Type {
+		case "message":
+			text := responsesMessageText(v.Content)
+			out = append(out, em.TextDone(v.ID, idx, text), em.ContentPartDone(v.ID, idx, text), em.ItemDone(idx, v))
+		case "function_call":
+			out = append(out, em.ArgsDone(v.CallID, idx, v.Name, v.Arguments), em.ItemDone(idx, v))
+		case "custom_tool_call":
+			out = append(out, em.InputDone(v.CallID, idx, v.Input), em.ItemDone(idx, v))
+		}
+	}
+	return append(out, em.Completed(status, usage, items))
+}
+
+// responsesMessageText extracts the aggregated output_text from a rendered
+// message item's content parts.
+func responsesMessageText(content []byte) string {
+	var parts []struct {
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(content, &parts); err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, p := range parts {
+		b.WriteString(p.Text)
+	}
+	return b.String()
 }
 
 // responsesEm binds the shared Responses emitter kernel to the captured
 // upstream message identity so this route's frames cannot diverge from the
 // sibling Chat-Completions-route synthesizer (FR-006).
 func (sc *StreamConverter) responsesEm() shared.ResponsesEventEmitter {
-	return shared.ResponsesEventEmitter{ID: sc.msgID, Model: sc.model}
+	return shared.ResponsesEventEmitter{ID: sc.msgID, Model: sc.model, Tools: sc.respTools}
 }
 
 // Flush terminates a stream whose upstream closed before message_stop:
@@ -360,7 +411,7 @@ func (sc *StreamConverter) Flush() [][]byte {
 	}
 	switch sc.sourceFormat {
 	case "openai-response":
-		return [][]byte{sc.responsesCompleted()}
+		return sc.responsesCompleted()
 	case "openai":
 		return nil
 	default: // claude passthrough forwards verbatim; nothing deferred
@@ -381,7 +432,7 @@ func (sc *StreamConverter) outputItems() []any {
 		indexes = append(indexes, i)
 	}
 	sort.Ints(indexes)
-	oa := shared.NewOutputAssembler(sc.msgID)
+	oa := shared.NewOutputAssembler(sc.msgID, sc.respTools)
 	for _, i := range indexes {
 		bs := sc.blocks[i]
 		switch bs.kind {
