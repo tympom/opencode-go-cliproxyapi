@@ -29,6 +29,3 @@ known_hosts
 ## Python
 __pycache__/
 *.py[cod]
-
-## Local AI-agent task handoff
-/.ai/HANDOFF.md
