@@ -19,3 +19,11 @@ regex = '''(?i)(?:(?:^|[\s;?&'"])password=([^\s'"/;&]{4,})|://[^:/\s@]+:([^@\s'"
 filter = '''
 matchesAny(finding["match"], [`(?i)password=['"]?your_`, `:your_[^@]*@`, `\$\{`, `://user:pass@`])
 '''
+
+# Reviewed 2026-10-04: fake credentials used as test fixtures.
+[[allowlists]]
+description = "Fake credentials in Go tests and the doc comment describing them"
+condition = "OR"
+paths = ['''internal/(?:config|errclass)/[a-z_]*_test\.go''']
+regexTarget = "line"
+regexes = ['''userinfo credentials''']
