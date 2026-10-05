@@ -17,56 +17,42 @@ Then install from the Management Center's Plugin Store page (or `POST /v0/manage
 
 ## Configuration
 
-In `config.yaml` under `plugins.configs.opencode-go-clpx`:
+Only `api-keys` is needed. In `config.yaml` under `plugins.configs.opencode-go-clpx`:
 
 ```yaml
 plugins:
   configs:
     opencode-go-clpx:
-      # Upstream base URL (default: "https://opencode.ai/zen/go/v1")
-      base-url: "https://opencode.ai/zen/go/v1"
-
-      # Optional catalog endpoint override (default: "{base-url}/models")
-      # catalog-url: "https://opencode.ai/zen/go/v1/models"
-
-      # Client-facing model ID prefix configuration
-      model-prefix:
-        enabled: true           # true -> "opencode-go/<model>", false -> bare "<model>" (default: true)
-        value: "opencode-go"    # prefix name (default: "opencode-go")
-
-      # OpenCode Go API keys. Supports ${ENV_VAR} expansion. With no keys the plugin still
-      # registers (so the Management Center config editor works) but serves no models.
       api-keys:
-        - value: "sk-opencode-key-1"
-          label: "work"                # optional display name; also names the auth file
-        - value: "sk-opencode-key-2"
-          label: "personal"
-        - "${OPENCODE_GO_API_KEY}"      # a bare string works too (no label)
-
-      # Catalog discovery settings
-      catalog:
-        refresh-interval: "15m"          # discovery refresh cadence, min "1m" (default: "15m")
-        stale-while-unavailable: true    # retain last good catalog snapshot on refresh failure (default: true)
-
-      # Protocol enable/disable switches (all default to true)
-      protocols:
-        chat-completions: true   # enables models routed to /v1/chat/completions
-        messages: true           # enables models routed to /v1/messages
-        responses: true          # enables models routed to /v1/responses
-
-      # Explicit route overrides per model (takes priority over built-in prefix routing)
-      route-overrides:
-        "custom-model":
-          protocol: "messages"           # "chat-completions" | "messages" | "responses"
-          endpoint: "/v1/messages"       # must start with /
-
-      # Execution settings
-      request-timeout: "5m"              # upstream request timeout (default: "5m")
-      max-response-bytes: 67108864       # max non-streaming response body size in bytes (default: 64 MiB)
-      allow-http: false                  # allow http:// scheme for local mock/testing (default: false)
+        - value: "sk-..."
+          label: "work"              # optional; names the quota card and auth file
+        - "${OPENCODE_GO_API_KEY}"   # a bare string or ${ENV_VAR} also works
 ```
 
-All fields are also editable through the Management Center's plugin config UI (registration publishes `ConfigFields`). A fresh store install registers without keys, so you can add `api-keys` there (Plugins → Edit config) without touching `config.yaml` by hand, e.g. `["sk-..."]` or `[{"value": "sk-...", "label": "work"}]`.
+The same list can be entered in the Management Center (Plugins → Edit config), as JSON: `["sk-..."]` or `[{"value": "sk-...", "label": "work"}]`. A fresh store install registers without keys, so the editor works before any key is set; with no keys the plugin serves no models. Duplicate key values are rejected.
+
+Everything else is optional:
+
+| Key | Default | Meaning |
+| --- | --- | --- |
+| `base-url` | `https://opencode.ai/zen/go/v1` | Upstream base URL |
+| `catalog-url` | `{base-url}/models` | Catalog endpoint override |
+| `model-prefix.enabled` | `true` | `true` -> `opencode-go/<model>`, `false` -> bare `<model>` |
+| `model-prefix.value` | `opencode-go` | Prefix name |
+| `catalog.refresh-interval` | `15m` | Discovery cadence, minimum `1m` |
+| `catalog.stale-while-unavailable` | `true` | Keep the last good catalog when a refresh fails |
+| `protocols.chat-completions`, `.messages`, `.responses` | `true` | Enable models routed to `/v1/chat/completions`, `/v1/messages`, `/v1/responses` |
+| `route-overrides` | none | Per-model route, wins over built-in prefix routing |
+| `request-timeout` | `5m` | Upstream request timeout |
+| `max-response-bytes` | `67108864` (64 MiB) | Max non-streaming response body |
+| `allow-http` | `false` | Allow `http://` URLs, for local mocks and tests |
+
+```yaml
+      route-overrides:
+        "custom-model":
+          protocol: "messages"       # chat-completions | messages | responses
+          endpoint: "/v1/messages"   # must start with /
+```
 
 ### Notes
 
