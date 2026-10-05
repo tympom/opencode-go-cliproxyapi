@@ -58,7 +58,7 @@ Everything else is optional:
 
 - **Auth files**: each key gets a credential file named after its label (`opencode-go-work.json`); unlabeled keys fall back to a masked key suffix (`opencode-go-key-Xf9a.json`). Renaming a key's label creates a new auth file; remove the old one in Auth Files manually (the host plugin ABI has no delete callback).
 - **Quota page**: Management Center → OpenCode Go Quota. Cards are titled with each key's label; reset times show local date/time plus a countdown, e.g. `09/23, 16:35 · in 4d 23h` (same formatting as CPA's native quota UI). Page load never contacts upstream; refresh each card manually or all at once with Refresh All.
-- Built and tested against CLIProxyAPI `v8.0.10`.
+- Built and tested against CLIProxyAPI `v8.0.15`.
 
 ## Changes vs upstream (`massiveits/opencode-go-cliproxyapi`)
 
