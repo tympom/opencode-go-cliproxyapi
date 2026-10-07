@@ -36,12 +36,32 @@ What each field is:
 
 - `value` (required): the raw OpenCode Go API key. Not a CLIProxyAPI client key, and no `Bearer ` prefix.
 - `label` (optional, but recommended): the name shown on this key's quota card and used in its auth file (`opencode-go-work.json`). Without it you get a masked key suffix such as `opencode-go-key-Xf9a`.
-- Keep the `-` list item and the `api-keys:` line, even with a single key. `api-keys` is always a list; more keys are just more `- value:` items.
+- Keep the `-` list item and the `api-keys:` line, even with a single key. `api-keys` is always a list.
 
 Same thing in the Management Center (Plugins -> Edit config), as JSON:
 
 ```json
 [{"value": "sk-...", "label": "work"}]
+```
+
+### More examples
+
+Several keys: one `- value:` item each, each with its own label:
+
+```yaml
+      api-keys:
+        - value: "sk-aaa..."
+          label: "work"
+        - value: "sk-bbb..."
+          label: "personal"
+```
+
+Shorthand without a label: a bare string or an environment variable:
+
+```yaml
+      api-keys:
+        - "sk-..."
+        - "${OPENCODE_GO_API_KEY}"
 ```
 
 A fresh store install registers without keys, so the editor works before any key is set; with no keys the plugin serves no models. Duplicate key values are rejected.
