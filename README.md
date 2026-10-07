@@ -17,21 +17,47 @@ Then install from the Management Center's Plugin Store page (or `POST /v0/manage
 
 ## Configuration
 
-Only `api-keys` is needed. In `config.yaml` under `plugins.configs.opencode-go-clpx`:
+Only `api-keys` is needed. It goes in CLIProxyAPI's `config.yaml` under `plugins.configs.opencode-go-clpx`.
+
+### The one-key setup (copy this)
+
+Put your OpenCode Go API key in `value` and a short name in `label`:
 
 ```yaml
 plugins:
   configs:
     opencode-go-clpx:
       api-keys:
-        - value: "sk-..."
-          label: "work"              # optional; names the quota card and auth file
-        - "${OPENCODE_GO_API_KEY}"   # a bare string or ${ENV_VAR} also works
+        - value: "sk-..."     # your OpenCode Go API key, exactly as shown at opencode.ai
+          label: "work"       # any short name; no spaces is safest
 ```
 
-The same list can be entered in the Management Center (Plugins → Edit config), as JSON: `["sk-..."]` or `[{"value": "sk-...", "label": "work"}]`. A fresh store install registers without keys, so the editor works before any key is set; with no keys the plugin serves no models. Duplicate key values are rejected.
+What each field is:
 
-Everything else is optional:
+- `value` (required): the raw OpenCode Go API key. Not a CLIProxyAPI client key, and no `Bearer ` prefix.
+- `label` (optional, but recommended): the name shown on this key's quota card and used in its auth file (`opencode-go-work.json`). Without it you get a masked key suffix such as `opencode-go-key-Xf9a`.
+- Keep the `-` list item and the `api-keys:` line, even with a single key. `api-keys` is always a list.
+
+Same thing in the Management Center (Plugins -> Edit config), as JSON:
+
+```json
+[{"value": "sk-...", "label": "work"}]
+```
+
+Several keys are just more list items, each with its own label:
+
+```yaml
+      api-keys:
+        - value: "sk-aaa..."
+          label: "work"
+        - value: "sk-bbb..."
+          label: "personal"
+        - "${OPENCODE_GO_API_KEY}"   # shorthand: a bare string or ${ENV_VAR}, no label
+```
+
+A fresh store install registers without keys, so the editor works before any key is set; with no keys the plugin serves no models. Duplicate key values are rejected.
+
+### Optional settings
 
 | Key | Default | Meaning |
 | --- | --- | --- |
