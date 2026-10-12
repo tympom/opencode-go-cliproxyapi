@@ -1,6 +1,6 @@
 # opencode-go-clpx
 
-A [CLIProxyAPI](https://help.router-for.me/plugin/development) plugin that exposes [OpenCode Go](https://opencode.ai) as a single `opencode-go` provider with shared key pooling, multi-protocol translation, and a per-key quota page; a personal fork of [massiveits/opencode-go-cliproxyapi](https://github.com/massiveits/opencode-go-cliproxyapi) with the changes listed below.
+A [CLIProxyAPI](https://help.router-for.me/plugin/development) plugin exposing [OpenCode Go](https://opencode.ai) as `opencode-go`, with shared key pooling, protocol translation and per-key quotas. Fork of [massiveits/opencode-go-cliproxyapi](https://github.com/massiveits/opencode-go-cliproxyapi), using the distinct plugin ID `opencode-go-clpx` so both store listings can coexist. Includes upstream `v0.1.10` with Codex CLI support.
 
 ## Install
 
@@ -21,7 +21,7 @@ Only `api-keys` is needed. It goes in CLIProxyAPI's `config.yaml` under `plugins
 
 ### The one-key setup (copy this)
 
-Put your OpenCode Go API key in `value` and a short name in `label`:
+Use your raw OpenCode Go key (not a proxy client key; no `Bearer ` prefix):
 
 ```yaml
 plugins:
@@ -32,13 +32,9 @@ plugins:
           label: "work"       # any short name; no spaces is safest
 ```
 
-What each field is:
+`api-keys` is always a list. Optional `label` names the quota card and auth file (`opencode-go-work.json`); omit it for a masked suffix (`opencode-go-key-Xf9a.json`). Short labels without spaces are safest.
 
-- `value` (required): the raw OpenCode Go API key. Not a CLIProxyAPI client key, and no `Bearer ` prefix.
-- `label` (optional, but recommended): the name shown on this key's quota card and used in its auth file (`opencode-go-work.json`). Without it you get a masked key suffix such as `opencode-go-key-Xf9a`.
-- Keep the `-` list item and the `api-keys:` line, even with a single key. `api-keys` is always a list.
-
-Same thing in the Management Center (Plugins -> Edit config), as JSON:
+Alternatively, in Management Center (Plugins -> Edit config):
 
 ```json
 [{"value": "sk-...", "label": "work"}]
@@ -46,17 +42,7 @@ Same thing in the Management Center (Plugins -> Edit config), as JSON:
 
 ### More examples
 
-Several keys: one `- value:` item each, each with its own label:
-
-```yaml
-      api-keys:
-        - value: "sk-aaa..."
-          label: "work"
-        - value: "sk-bbb..."
-          label: "personal"
-```
-
-Shorthand without a label: a bare string or an environment variable:
+Add one item per key with distinct labels. Unlabeled shorthand accepts bare strings and environment variables:
 
 ```yaml
       api-keys:
@@ -91,18 +77,6 @@ A fresh store install registers without keys, so the editor works before any key
 
 ### Notes
 
-- **Auth files**: each key gets a credential file named after its label (`opencode-go-work.json`); unlabeled keys fall back to a masked key suffix (`opencode-go-key-Xf9a.json`). Renaming a key's label creates a new auth file; remove the old one in Auth Files manually (the host plugin ABI has no delete callback).
-- **Quota page**: Management Center → OpenCode Go Quota. Cards are titled with each key's label; reset times show local date/time plus a countdown, e.g. `09/23, 16:35 · in 4d 23h` (same formatting as CPA's native quota UI). Page load never contacts upstream; refresh each card manually or all at once with Refresh All.
+- **Auth files**: renaming a label creates a new file; manually remove the old one in Auth Files. Same-name keys get a 12-hex disambiguator rather than overwrite each other.
+- **Quota page**: Management Center -> OpenCode Go Quota. Reset times show local date/time and a countdown. Page load never contacts upstream; refresh cards individually or with Refresh All.
 - Built and tested against CLIProxyAPI `v8.0.21`.
-
-## Changes vs upstream (`massiveits/opencode-go-cliproxyapi`)
-
-- **Plugin ID renamed** `opencode-go-cliproxyapi` → `opencode-go-clpx` so this fork can coexist with the official store listing instead of colliding on the same name.
-- **Per-key labels**: `api-keys[].label` names a key's quota card and its auth file (upstream shows an opaque hash of the key).
-- **Readable auth file names**: `opencode-go-<label>.json` instead of upstream's `opencode-go-key-<64-hex>.json`; same-name keys get a 12-hex disambiguator instead of overwriting each other.
-- **Native reset-time formatting on the quota page**: `09/23, 16:35 · in 4d 23h` style (ported from CPA's Management Center); upstream prints the raw `resets_at` ISO string.
-- **Registers without API keys**, so the config editor works right after a Store install; upstream fails registration until a key is configured.
-- **Plain-string API keys**: `api-keys` accepts `["sk-..."]` as well as `{value, label}` objects.
-- **CI**: Linux-only release builds (amd64/arm64), no test job; `registry.json` published for the plugin store.
-
-Everything else (provider behavior, protocol translation, catalog discovery, scheduling, model prefixing) is unchanged from upstream (merged through upstream `v0.1.10`, incl. its Codex CLI support); merge `upstream/main` to pick up its fixes.
