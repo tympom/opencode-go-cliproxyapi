@@ -79,4 +79,4 @@ A fresh store install registers without keys, so the editor works before any key
 
 - **Auth files**: renaming a label creates a new file; manually remove the old one in Auth Files. Same-name keys get a 12-hex disambiguator rather than overwrite each other.
 - **Quota page**: Management Center -> OpenCode Go Quota. Reset times show local date/time and a countdown. Page load never contacts upstream; refresh cards individually or with Refresh All.
-- Built and tested against CLIProxyAPI `v8.0.21`.
+- Built and tested against CLIProxyAPI `v8.0.31` with Go `1.27.2`.
