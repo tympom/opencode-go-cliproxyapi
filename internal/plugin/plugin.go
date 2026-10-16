@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "1.1.2"
+	pluginVersion = "1.1.3"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -176,7 +176,7 @@ func pluginConfigFields() []pluginapi.ConfigField {
 		{
 			Name:        "api-keys",
 			Type:        pluginapi.ConfigFieldTypeArray,
-			Description: "OpenCode Go API keys. Accepts a list of keys or objects with value and optional label fields. Supports environment variable expansion.",
+			Description: "OpenCode Go API keys",
 		},
 		{
 			Name:        "base-url",
