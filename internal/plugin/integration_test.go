@@ -386,7 +386,7 @@ func (st *mockOpenCode) chatRequest(t *testing.T) (path, auth string, body map[s
 }
 
 func integrationYAML(baseURL string) string {
-	// The real base-url carries the version segment (.../zen/go/v1); the
+	// The real base-url carries the version segment (.../inference/go/v1); the
 	// mock server root therefore gets "/v1" appended so /v1/models and
 	// /v1/chat/completions line up.
 	return fmt.Sprintf("base-url: %s/v1\nallow-http: true\napi-keys:\n  - value: sk-test-1\n", baseURL)

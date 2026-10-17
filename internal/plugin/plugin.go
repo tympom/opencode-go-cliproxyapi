@@ -24,7 +24,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "1.1.3"
+	pluginVersion = "1.1.4"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -181,7 +181,7 @@ func pluginConfigFields() []pluginapi.ConfigField {
 		{
 			Name:        "base-url",
 			Type:        pluginapi.ConfigFieldTypeString,
-			Description: "Upstream base URL (default: https://opencode.ai/zen/go/v1).",
+			Description: "Upstream base URL (default: https://opencode.ai/inference/go/v1).",
 		},
 		{
 			Name:        "catalog-url",

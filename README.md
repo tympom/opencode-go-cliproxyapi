@@ -56,7 +56,7 @@ A fresh store install registers without keys, so the editor works before any key
 
 | Key | Default | Meaning |
 | --- | --- | --- |
-| `base-url` | `https://opencode.ai/zen/go/v1` | Upstream base URL |
+| `base-url` | `https://opencode.ai/inference/go/v1` | Upstream base URL |
 | `catalog-url` | `{base-url}/models` | Catalog endpoint override |
 | `model-prefix.enabled` | `true` | `true` -> `opencode-go/<model>`, `false` -> bare `<model>` |
 | `model-prefix.value` | `opencode-go` | Prefix name |
@@ -79,4 +79,4 @@ A fresh store install registers without keys, so the editor works before any key
 
 - **Auth files**: renaming a label creates a new file; manually remove the old one in Auth Files. Same-name keys get a 12-hex disambiguator rather than overwrite each other.
 - **Quota page**: Management Center -> OpenCode Go Quota. Reset times show local date/time and a countdown. Page load never contacts upstream; refresh cards individually or with Refresh All.
-- Built and tested against CLIProxyAPI `v8.0.31` with Go `1.27.2`.
+- Built and tested against CLIProxyAPI `v8.0.32` with Go `1.27.2`.
