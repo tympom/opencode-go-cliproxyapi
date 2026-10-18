@@ -61,15 +61,15 @@ func (f *fakeCaller) call(method string, payload []byte) ([]byte, error) {
 	if method == pluginabi.MethodHostAuthSave && err == nil && hostEnvelopeOK(raw) {
 		var req pluginapi.HostAuthSaveRequest
 		if json.Unmarshal(payload, &req) == nil && strings.TrimSpace(req.Name) != "" {
-			var record struct {
-				Label string `json:"label"`
-			}
-			_ = json.Unmarshal(req.JSON, &record)
 			f.mu.Lock()
 			if f.authFiles == nil {
 				f.authFiles = make(map[string]string)
 			}
-			f.authFiles[req.Name] = record.Label
+			var record struct {
+				ID string `json:"id"`
+			}
+			_ = json.Unmarshal(req.JSON, &record)
+			f.authFiles[req.Name] = record.ID
 			f.mu.Unlock()
 		}
 	}
@@ -97,9 +97,9 @@ func hasExplicitAuthList(raw []byte) bool {
 func (f *fakeCaller) authListResponse() []byte {
 	f.mu.Lock()
 	files := make([]pluginapi.HostAuthFileEntry, 0, len(f.authFiles))
-	for name, label := range f.authFiles {
+	for name, id := range f.authFiles {
 		files = append(files, pluginapi.HostAuthFileEntry{
-			ID: strings.TrimSuffix(name, ".json"), Name: name, Label: label, Source: "file", Path: name,
+			ID: id, Name: name, Source: "file", Path: name,
 		})
 	}
 	f.mu.Unlock()
@@ -579,7 +579,7 @@ func TestLifecycleMaterializesDeterministicAuthRecords(t *testing.T) {
 		}
 		hash := sha256.Sum256([]byte(record.APIKey))
 		wantHash := hex.EncodeToString(hash[:])
-		if record.Type != ProviderID || record.ID != "opencode-go-key-"+wantHash || record.Label != defaultLabel(record.APIKey) || wire.Name != mustAuthFileName(config.APIKey{Value: record.APIKey}, wantHash) {
+		if record.Type != ProviderID || record.ID != "opencode-go-key-"+wantHash || !strings.HasPrefix(record.Label, "OpenCode Go ") || !strings.HasPrefix(wire.Name, "OpenCode-Go-") {
 			t.Fatalf("record identity = %+v name=%q", record, wire.Name)
 		}
 		if record.APIKey == "" || strings.Contains(wire.Name, record.APIKey) || strings.Contains(record.ID, record.APIKey) {

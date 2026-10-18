@@ -1,6 +1,6 @@
 # opencode-go-clpx
 
-A [CLIProxyAPI](https://help.router-for.me/plugin/development) plugin exposing [OpenCode Go](https://opencode.ai) as `opencode-go`, with shared key pooling, protocol translation and per-key quotas. Fork of [massiveits/opencode-go-cliproxyapi](https://github.com/massiveits/opencode-go-cliproxyapi), using the distinct plugin ID `opencode-go-clpx` so both store listings can coexist. Includes upstream `v0.1.10` with Codex CLI support.
+A [CLIProxyAPI](https://help.router-for.me/plugin/development) plugin exposing [OpenCode Go](https://opencode.ai) as `opencode-go`, with shared key pooling, protocol translation and per-key quotas. Fork of [massiveits/opencode-go-cliproxyapi](https://github.com/massiveits/opencode-go-cliproxyapi), using the distinct plugin ID `opencode-go-clpx` so both store listings can coexist. Includes upstream `v0.2.0` with native CLIProxyAPI quotas.
 
 ## Install
 
@@ -29,20 +29,20 @@ plugins:
     opencode-go-clpx:
       api-keys:
         - value: "sk-..."     # your OpenCode Go API key, exactly as shown at opencode.ai
-          label: "work"       # any short name; no spaces is safest
+          name: "Work"        # optional account name
 ```
 
-`api-keys` is always a list. Optional `label` names the quota card and auth file (`opencode-go-work.json`); omit it for a masked suffix (`opencode-go-key-Xf9a.json`). Short labels without spaces are safest.
+`api-keys` is always a list. Optional `name` labels the account and names its new auth file (`Work.json`); without it, one key shows as **OpenCode Go** and several as **OpenCode Go 1**, **OpenCode Go 2**, ... in configuration order.
 
 Alternatively, in Management Center (Plugins -> Edit config):
 
 ```json
-[{"value": "sk-...", "label": "work"}]
+[{"value": "sk-...", "name": "Work"}]
 ```
 
 ### More examples
 
-Add one item per key with distinct labels. Unlabeled shorthand accepts bare strings and environment variables:
+Add one item per key. Unnamed shorthand accepts bare strings and environment variables:
 
 ```yaml
       api-keys:
@@ -77,6 +77,6 @@ A fresh store install registers without keys, so the editor works before any key
 
 ### Notes
 
-- **Auth files**: renaming a label creates a new file; manually remove the old one in Auth Files. Same-name keys get a 12-hex disambiguator rather than overwrite each other.
-- **Quota page**: Management Center -> OpenCode Go Quota. Reset times show local date/time and a countdown. Page load never contacts upstream; refresh cards individually or with Refresh All.
-- Built and tested against CLIProxyAPI `v8.0.32` with Go `1.27.2`.
+- **Auth files**: existing files keep their names and IDs; a changed `name` updates the label, not the file name. Same-name new files get a `-2`, `-3`, ... suffix.
+- **Quotas**: rolling, weekly and monthly windows use CLIProxyAPI's generic quota API (`GET /v0/management/quota/providers`, `POST /v0/management/quota/fetch`) for the selected credential; the separate quota page is gone and the Management Center build must support generic quotas. Quota reset is unsupported.
+- Built and tested against CLIProxyAPI `v8.0.33` with Go `1.27.2`.

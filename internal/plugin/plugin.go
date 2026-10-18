@@ -6,9 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginabi"
 	"github.com/router-for-me/CLIProxyAPI/v8/sdk/pluginapi"
@@ -24,7 +27,7 @@ const ProviderID = "opencode-go"
 // pluginName / pluginVersion are reported in registration metadata.
 const (
 	pluginName    = "opencode-go-clpx"
-	pluginVersion = "1.1.4"
+	pluginVersion = "1.2.0"
 )
 
 // githubRepoURL satisfies the host's validPlugin gate (host.go
@@ -95,7 +98,10 @@ func (m *Manager) HandleCall(method string, request []byte) (resp []byte, err er
 		if json.Unmarshal(request, &req) != nil {
 			return ErrEnvelope("invalid_request", "malformed auth parse request body"), nil
 		}
-		resp, err := (authProvider{}).ParseAuth(context.Background(), req)
+		m.mu.RLock()
+		cfg := m.cfg
+		m.mu.RUnlock()
+		resp, err := (authProvider{cfg: cfg}).ParseAuth(context.Background(), req)
 		if err != nil {
 			return ErrEnvelope("auth_failure", err.Error()), nil
 		}
@@ -127,10 +133,22 @@ func (m *Manager) HandleCall(method string, request []byte) (resp []byte, err er
 			return ErrEnvelope("auth_failure", err.Error()), nil
 		}
 		return okEnvelope(resp), nil
-	case pluginabi.MethodManagementRegister:
-		return m.registerManagement(request)
-	case pluginabi.MethodManagementHandle:
-		return m.handleManagement(request)
+	case pluginabi.MethodQuotaIdentifier:
+		return okEnvelope(map[string]string{"identifier": ProviderID}), nil
+	case pluginabi.MethodQuotaDescribe:
+		return okEnvelope(pluginapi.QuotaDescribeResponse{SupportedProviders: []string{ProviderID}, DisplayName: "OpenCode Go"}), nil
+	case pluginabi.MethodQuotaFetch:
+		var req pluginapi.QuotaFetchRequest
+		if json.Unmarshal(request, &req) != nil {
+			return ErrEnvelope("invalid_request", "malformed quota request"), nil
+		}
+		result, err := m.FetchQuota(context.Background(), req)
+		if err != nil {
+			return ErrEnvelope("quota_failure", err.Error()), nil
+		}
+		return okEnvelope(result), nil
+	case pluginabi.MethodQuotaReset:
+		return ErrEnvelope("unsupported", "OpenCode Go does not support quota resets"), nil
 	case pluginabi.MethodExecutorIdentifier:
 		return okEnvelope(map[string]string{"identifier": ProviderID}), nil
 	case pluginabi.MethodExecutorCountTokens:
@@ -162,6 +180,7 @@ type capabilities struct {
 	ExecutorModelScope    pluginapi.ExecutorModelScope `json:"executor_model_scope,omitempty"`
 	ExecutorInputFormats  []string                     `json:"executor_input_formats,omitempty"`
 	ExecutorOutputFormats []string                     `json:"executor_output_formats,omitempty"`
+	QuotaProvider         bool                         `json:"quota_provider"`
 	ManagementAPI         bool                         `json:"management_api"`
 }
 
@@ -245,56 +264,9 @@ func registrationEnvelope() []byte {
 			ExecutorModelScope:    pluginapi.ExecutorModelScopeOAuth,
 			ExecutorInputFormats:  formats,
 			ExecutorOutputFormats: formats,
-			ManagementAPI:         true,
+			QuotaProvider:         true,
 		},
 	})
-}
-
-func (m *Manager) registerManagement(request []byte) ([]byte, error) {
-	var req struct {
-		Plugin           pluginapi.Metadata `json:"Plugin"`
-		BasePath         string             `json:"BasePath"`
-		ResourceBasePath string             `json:"ResourceBasePath"`
-	}
-	if err := json.Unmarshal(request, &req); err != nil {
-		return ErrEnvelope("invalid_request", "malformed management registration request body"), nil
-	}
-	return okEnvelope(struct {
-		Routes []struct {
-			Method string `json:"method"`
-			Path   string `json:"path"`
-		} `json:"routes"`
-		Resources []struct {
-			Path        string `json:"path"`
-			Menu        string `json:"menu"`
-			Description string `json:"description"`
-		} `json:"resources"`
-	}{
-		Routes: []struct {
-			Method string `json:"method"`
-			Path   string `json:"path"`
-		}{{Method: "POST", Path: "/plugins/" + pluginName + "/quota-usage"}},
-		Resources: []struct {
-			Path        string `json:"path"`
-			Menu        string `json:"menu"`
-			Description string `json:"description"`
-		}{{Path: "/quota", Menu: "OpenCode Go Quota", Description: "View OpenCode Go quota windows."}},
-	}), nil
-}
-
-func (m *Manager) handleManagement(request []byte) ([]byte, error) {
-	var req struct {
-		pluginapi.ManagementRequest
-		HostCallbackID string `json:"host_callback_id,omitempty"`
-	}
-	if err := json.Unmarshal(request, &req); err != nil {
-		return ErrEnvelope("invalid_request", "malformed management request body"), nil
-	}
-	resp, err := m.HandleManagement(context.Background(), req.ManagementRequest)
-	if err != nil {
-		return ErrEnvelope("management_failure", err.Error()), nil
-	}
-	return okEnvelope(resp), nil
 }
 
 // handleLifecycle implements plugin.register / plugin.reconfigure: load
@@ -370,14 +342,11 @@ func (m *Manager) handleLifecycle(request []byte) ([]byte, error) {
 	return registrationEnvelope(), nil
 }
 
-// materializeAuthRecords makes CPA-visible auth files idempotently. The host
-// derives a credential's identity from its FILE NAME (authIDForPath/upsert
-// key records by file name and ignore the record's id/label fields on
-// list), so the file name is the dedup key here too: labeled keys read
-// "opencode-go-<label>.json" — the bare label, nothing else; unlabeled ones
-// fall back to the masked key suffix ("opencode-go-key-Xf9a.json"). When two
-// keys resolve to the same name, the second carries a 12-hex disambiguator
-// so same-labeled (or same-suffix) keys cannot overwrite each other.
+// materializeAuthRecords makes CPA-visible auth files idempotently. Existing
+// records are discovered through CPA so their host-managed metadata is never
+// overwritten. The full key digest is non-secret and independent of config
+// ordering. The host ABI has no delete/disable callback, so removed keys remain
+// stale records and are not claimed as removed.
 func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config) error {
 	if m.bridge == nil {
 		return nil
@@ -388,35 +357,52 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 	}
 	existing := make(map[string]struct{}, len(entries)*2)
 	for _, entry := range entries {
-		for _, name := range []string{strings.TrimSpace(entry.Name), strings.TrimSpace(entry.ID)} {
-			if name == "" {
-				continue
+		// Before the auth manager is ready, v8 lists disk files without IDs.
+		// Recover identity from those host-reported paths to avoid duplicates
+		// when a credential has a readable filename.
+		if (entry.Provider == ProviderID || entry.Type == ProviderID) && !strings.HasPrefix(entry.ID, "opencode-go-key-") {
+			if !filepath.IsAbs(entry.Path) {
+				return fmt.Errorf("existing auth record has no absolute path")
 			}
+			raw, err := os.ReadFile(entry.Path)
+			if err != nil {
+				return fmt.Errorf("cannot read existing plugin auth record")
+			}
+			var record struct {
+				APIKey string `json:"api_key"`
+			}
+			if json.Unmarshal(raw, &record) != nil || record.APIKey == "" {
+				return fmt.Errorf("existing plugin auth record is invalid")
+			}
+			digest := sha256.Sum256([]byte(record.APIKey))
+			existing["opencode-go-key-"+hex.EncodeToString(digest[:])] = struct{}{}
+		}
+		if name := strings.TrimSpace(entry.Name); name != "" {
 			existing[name] = struct{}{}
-			existing[strings.TrimSuffix(name, ".json")] = struct{}{}
+		}
+		if id := strings.TrimSpace(entry.ID); id != "" {
+			existing[id] = struct{}{}
 		}
 	}
-	claimed := make(map[string]struct{}, len(cfg.APIKeys))
-	for _, key := range cfg.APIKeys {
+	for i, key := range cfg.APIKeys {
 		digest := sha256.Sum256([]byte(key.Value))
 		hash := hex.EncodeToString(digest[:])
 		id := "opencode-go-key-" + hash
-		name, collision := authFileName(key, hash, claimed)
-		if name == "" || collision {
-			// More than two keys collapsed onto the same name: nothing
-			// sane left to call it; skip rather than overwrite a sibling.
+		name := id + ".json"
+		if _, ok := existing[id]; ok {
 			continue
 		}
 		if _, ok := existing[name]; ok {
 			continue
 		}
+		name = availableAuthName(accountLabel(cfg, key.Value, "", i), existing)
 		record, err := json.Marshal(struct {
 			Type   string `json:"type"`
 			ID     string `json:"id"`
 			Label  string `json:"label"`
 			APIKey string `json:"api_key"`
 		}{
-			Type: "opencode-go", ID: id, Label: keyLabel(key), APIKey: key.Value,
+			Type: "opencode-go", ID: id, Label: accountLabel(cfg, key.Value, "", i), APIKey: key.Value,
 		})
 		if err != nil {
 			return fmt.Errorf("build auth record")
@@ -426,61 +412,11 @@ func (m *Manager) materializeAuthRecords(ctx context.Context, cfg config.Config)
 		}); err != nil {
 			return err
 		}
+		existing[id] = struct{}{}
+		existing[name] = struct{}{}
 		debugTrace("auth materialized id=%s file=%s", id, name)
 	}
 	return nil
-}
-
-// authFileName derives the credential file name from the key's display label
-// alone — "opencode-go-work.json" — with no hash suffix in the normal case.
-// Unlabeled keys fall back to the masked key suffix
-// ("opencode-go-key-Xf9a.json"). When two keys resolve to the same name
-// within one registration (duplicate labels, or two keys sharing a last-4
-// suffix), the second gets a 12-hex disambiguator so it cannot overwrite its
-// sibling; a third is skipped. The label slug is restricted to
-// host-filename-safe characters ([A-Za-z0-9._-]).
-func authFileName(key config.APIKey, hash string, claimed map[string]struct{}) (string, bool) {
-	base := "opencode-go-key-"
-	if key.Label != "" {
-		if slug := slugLabel(key.Label); slug != "" {
-			base = "opencode-go-" + slug
-		} else {
-			base += tail(key.Value)
-		}
-	} else {
-		base += tail(key.Value)
-	}
-	name := base + ".json"
-	if _, taken := claimed[name]; taken {
-		name = base + "-" + hash[:12] + ".json"
-		if _, taken := claimed[name]; taken {
-			return "", true
-		}
-	}
-	claimed[name] = struct{}{}
-	return name, false
-}
-
-// slugLabel reduces a display label to host-filename-safe characters.
-func slugLabel(label string) string {
-	var b strings.Builder
-	for _, r := range label {
-		switch {
-		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '.', r == '-', r == '_':
-			b.WriteRune(r)
-		default:
-			b.WriteRune('-')
-		}
-	}
-	return b.String()
-}
-
-// tail returns the masked last characters of a key value.
-func tail(key string) string {
-	if len(key) > 4 {
-		key = key[len(key)-4:]
-	}
-	return slugLabel(key)
 }
 
 // handleModels implements model.static / model.for_auth (FR-003): the last
@@ -640,4 +576,29 @@ func okEnvelope(result any) []byte {
 func ErrEnvelope(code, message string) []byte {
 	out, _ := json.Marshal(pluginabi.Envelope{OK: false, Error: &pluginabi.Error{Code: code, Message: message}})
 	return out
+}
+
+// Use a readable filename because management clients may show it instead of Label.
+func availableAuthName(label string, existing map[string]struct{}) string {
+	base := strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' {
+			return r
+		}
+		return '-'
+	}, label)
+	base = strings.Trim(base, "-")
+	if base == "" {
+		base = "OpenCode-Go"
+	}
+	runes := []rune(base)
+	if len(runes) > 80 {
+		base = string(runes[:80])
+	}
+	name := base + ".json"
+	for n := 2; ; n++ {
+		if _, exists := existing[name]; !exists {
+			return name
+		}
+		name = fmt.Sprintf("%s-%d.json", base, n)
+	}
 }

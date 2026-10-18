@@ -28,8 +28,8 @@ type ModelPrefix struct {
 }
 
 type APIKey struct {
+	Name  string
 	Value string
-	Label string
 }
 
 type Catalog struct {
@@ -83,12 +83,12 @@ type rawPrefix struct {
 }
 
 type rawKey struct {
+	Name  string `yaml:"name"`
 	Value string `yaml:"value"`
-	Label string `yaml:"label"`
 }
 
 // UnmarshalYAML accepts a key as a bare string ("sk-...") or as a
-// {value, label} mapping, so the Management Center editor takes ["sk-..."].
+// {value, name} mapping, so the Management Center editor takes ["sk-..."].
 // Errors carry no node values (see Load).
 func (k *rawKey) UnmarshalYAML(n *yaml.Node) error {
 	switch n.Kind {
@@ -132,7 +132,7 @@ func Load(yamlBytes []byte) (Config, error) {
 	}
 	keys := make([]APIKey, len(raw.APIKeys))
 	for i, k := range raw.APIKeys {
-		keys[i] = APIKey{Value: os.ExpandEnv(k.Value), Label: strings.TrimSpace(k.Label)}
+		keys[i] = APIKey{Value: os.ExpandEnv(k.Value), Name: strings.TrimSpace(k.Name)}
 	}
 	refreshInterval, err := parseDuration("catalog.refresh-interval", raw.Catalog.RefreshInterval, DefaultRefreshInterval)
 	if err != nil {

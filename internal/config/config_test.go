@@ -134,13 +134,13 @@ func TestLoadEnvExpansion(t *testing.T) {
 	}
 }
 
-func TestLoadKeyLabels(t *testing.T) {
-	doc := "api-keys:\n  - value: sk-one\n    label: \"work\"\n  - value: sk-two\n"
+func TestLoadKeyNames(t *testing.T) {
+	doc := "api-keys:\n  - value: sk-one\n    name: \"work\"\n  - value: sk-two\n"
 	c, err := Load([]byte(doc))
 	if err != nil {
 		t.Fatalf("Load failed: %v", err)
 	}
-	if len(c.APIKeys) != 2 || c.APIKeys[0].Label != "work" || c.APIKeys[1].Label != "" {
+	if len(c.APIKeys) != 2 || c.APIKeys[0].Name != "work" || c.APIKeys[1].Name != "" {
 		t.Fatalf("APIKeys = %+v", c.APIKeys)
 	}
 }
@@ -348,11 +348,11 @@ func TestValidateURLRejectsQueryFragmentUserinfo(t *testing.T) {
 
 func TestLoadAcceptsBareStringKeys(t *testing.T) {
 	t.Setenv("TEST_OG_KEY", "sk-from-env")
-	c, err := Load([]byte("api-keys: [\"sk-bare\", {value: sk-mapped, label: work}, \"${TEST_OG_KEY}\"]\n"))
+	c, err := Load([]byte("api-keys: [\"sk-bare\", {value: sk-mapped, name: work}, \"${TEST_OG_KEY}\"]\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []APIKey{{Value: "sk-bare"}, {Value: "sk-mapped", Label: "work"}, {Value: "sk-from-env"}}
+	want := []APIKey{{Value: "sk-bare"}, {Value: "sk-mapped", Name: "work"}, {Value: "sk-from-env"}}
 	if len(c.APIKeys) != len(want) {
 		t.Fatalf("keys = %+v", c.APIKeys)
 	}
