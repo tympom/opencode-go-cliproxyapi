@@ -79,4 +79,4 @@ A fresh store install registers without keys, so the editor works before any key
 
 - **Auth files**: existing files keep their names and IDs; a changed `name` updates the label, not the file name. Same-name new files get a `-2`, `-3`, ... suffix.
 - **Quotas**: rolling, weekly and monthly windows use CLIProxyAPI's generic quota API (`GET /v0/management/quota/providers`, `POST /v0/management/quota/fetch`) for the selected credential; the separate quota page is gone and the Management Center build must support generic quotas. Quota reset is unsupported.
-- Built and tested against CLIProxyAPI `v8.0.33` with Go `1.27.2`.
+- Built and tested against CLIProxyAPI `v8.0.34` with Go `1.27.2`.
